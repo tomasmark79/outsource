@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="background" x1="20" y1="16" x2="108" y2="116" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#4338ca"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="32" y1="34" x2="96" y2="84" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#312e81"/>
+      <stop offset="1" stop-color="#17153b"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="27" fill="url(#background)"/>
+  <rect x="22" y="29" width="84" height="63" rx="9" fill="#24145c" opacity=".3"/>
+  <path d="M57 86h14v12h11a4 4 0 0 1 4 4v1H42v-1a4 4 0 0 1 4-4h11Z" fill="#ddd6fe"/>
+  <rect x="24" y="27" width="80" height="61" rx="7" fill="#f5f3ff"/>
+  <rect x="29" y="32" width="70" height="48" rx="3" fill="url(#screen)"/>
+  <path d="m64 39 19 10-19 11-19-11Z" fill="#c4b5fd"/>
+  <path d="m45 49 19 11v20L45 69Z" fill="#8b5cf6"/>
+  <path d="m64 60 19-11v20L64 80Z" fill="#67e8f9"/>
+  <path d="m64 42 14 7-14 8-14-8Z" fill="#ede9fe" opacity=".4"/>
+  <circle cx="95" cy="84" r="1.5" fill="#8b5cf6"/>
+</svg>
