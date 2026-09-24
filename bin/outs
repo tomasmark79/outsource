@@ -917,14 +917,14 @@ def handle_desktop(arguments: list[str]) -> int:
     }[action]
     launcher_name = name or f"{client_id} — {action_label} — {target}"
     icon = {
-        "ssh": "utilities-terminal",
+        "ssh": str((ROOT / "assets" / "outs-ssh.svg").resolve()),
         "virt-viewer": str((ROOT / "assets" / "outs-virt-viewer.svg").resolve()),
         "rdp": str((ROOT / "assets" / "outs-rdp.svg").resolve()),
         "web": "web-browser",
         "vpn-up": "network-vpn",
         "vpn-down": "network-vpn",
     }[action]
-    if os.environ.get("OUTSOURCE_EXECUTABLE") and action in {"rdp", "virt-viewer"}:
+    if os.environ.get("OUTSOURCE_EXECUTABLE") and action in {"ssh", "rdp", "virt-viewer"}:
         icon = f"outs-{action}"
     command = [str(launcher_executable()), client_id, action, target]
     exec_value = " ".join(desktop_exec_argument(argument) for argument in command)

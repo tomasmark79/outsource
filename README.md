@@ -24,6 +24,8 @@ Zrušení průvodce nevytvoří rozpracované připojení.
 - **SSH:** zadej alias z `~/.ssh/config` nebo adresu serveru. Uživatele a port
   můžeš ponechat prázdné; použije se nastavení OpenSSH. Platí také systémová
   konfigurace SSH, `ProxyJump`, klíče a SSH agent. Připojení se otevře v terminálu.
+  Terminál má ikonu SSH zástupce a po skončení relace (také přes Ctrl+D) se zavře.
+  Používá vlastní variantu GNOME Console; chování běžného terminálu se nemění.
   Volitelně lze místo toho zadat UUID položky a název přílohy s klíčem v KeePassXC.
 - **Virt-viewer:** název nebo UUID stroje a připojení libvirt, například
   `qemu:///system`. Otevře se přímo grafické okno bez terminálu.

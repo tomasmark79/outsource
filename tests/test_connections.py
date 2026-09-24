@@ -35,7 +35,11 @@ class ConnectionTests(unittest.TestCase):
         path = connections.connection_path(self.api, self.connection['id'])
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         desktop = connections.desktop_path(self.api, self.connection)
-        self.assertIn('Terminal=true', desktop.read_text())
+        self.assertIn('Terminal=false', desktop.read_text())
+        self.assertIn('"/run/current-system/sw/bin/outs-terminal"', desktop.read_text())
+        self.assertIn('--gapplication-app-id=org.nixon.outsource.ssh.c' + 'a' * 32, desktop.read_text())
+        self.assertIn('StartupWMClass=org.nixon.outsource.ssh.c' + 'a' * 32, desktop.read_text())
+        self.assertIn('Icon=' + str(self.api.ROOT / 'assets/outs-ssh.svg'), desktop.read_text())
         self.assertIn('"connect" "' + 'a' * 32 + '"', desktop.read_text())
         previous = copy.deepcopy(self.connection)
         self.connection['name'] = 'Nový název'

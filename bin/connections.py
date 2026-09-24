@@ -121,17 +121,24 @@ def desktop_contents(api, connection):
     command = [str(api.launcher_executable()), "connect", connection["id"]]
     if kind != "ssh":
         command.append("--gui")
-    icon = "utilities-terminal" if kind == "ssh" else "outs-" + kind
-    if kind != "ssh" and not os.environ.get("OUTSOURCE_EXECUTABLE"):
-        icon = str(api.ROOT / "assets" / (icon + ".svg"))
-    window_class = api.desktop_id("local", kind, connection["id"]) if kind != "ssh" else ""
+    icon = str(api.ROOT / "assets" / ("outs-" + kind + ".svg"))
+    if os.environ.get("OUTSOURCE_EXECUTABLE"):
+        icon = str(api.launcher_executable().parent.parent /
+                   "share/icons/hicolor/scalable/apps" / ("outs-" + kind + ".svg"))
+    window_class = api.desktop_id("local", kind, connection["id"])
+    if kind == "ssh":
+        # Vlastní identita přiřadí terminál ke konkrétnímu zástupci v GNOME.
+        window_class = "org.nixon.outsource.ssh.c" + connection["id"]
+        command = [str(api.launcher_executable().with_name("outs-terminal")),
+                   "--gapplication-app-id=" + window_class,
+                   "--title=" + connection["name"], "--", *command]
     return (
         "[Desktop Entry]\nType=Application\n"
         f"Name={api.desktop_text(connection['name'])}\n"
         f"Comment={api.desktop_text(TYPES[kind])}\n"
         f"Exec={' '.join(api.desktop_exec_argument(value) for value in command)}\n"
         f"Icon={api.desktop_text(icon)}\n"
-        f"Terminal={'true' if kind == 'ssh' else 'false'}\n"
+        "Terminal=false\n"
         f"StartupWMClass={window_class}\n"
         "StartupNotify=false\nCategories=Network;RemoteAccess;\n"
         f"X-Outsource-Connection={connection['id']}\n"
