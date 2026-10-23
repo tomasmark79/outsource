@@ -1,4 +1,9 @@
 .direnv/
+.venv/
+/result
+/result-*
+/clients/
+/connections/
 __pycache__/
 .env
 .env.*

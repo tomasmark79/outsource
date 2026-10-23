@@ -2,6 +2,7 @@
 
 import copy
 import fcntl
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -18,7 +19,7 @@ ID_RE = re.compile(r"[a-f0-9]{32}")
 def dialog(api, *arguments):
     # Výběr souborů má vlastní GTK tlačítka; Zenity u něj vlastní popisky odmítá.
     labels = [] if "--file-selection" in arguments else ["--ok-label=Potvrdit"]
-    if not any(kind in arguments for kind in ("--info", "--error", "--file-selection")):
+    if not any(kind in arguments for kind in ("--info", "--error", "--warning", "--file-selection")):
         labels.append("--cancel-label=Zrušit")
     result = subprocess.run(
         [api.require_program("zenity"), "--title=Vzdálená připojení", "--no-markup",
@@ -62,12 +63,24 @@ def connection_path(api, connection_id):
     return data_dir(api) / (connection_id + ".json")
 
 
+def validate_host(api, host):
+    if isinstance(host, str) and re.fullmatch(r"[A-Za-z0-9_.:%-]+", host):
+        try:
+            ipaddress.ip_address(host)
+            return
+        except ValueError:
+            # Zachováme i aliasy OpenSSH s podtržítkem či procentem.
+            if re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.%-]*", host):
+                return
+    raise api.OutsError("Server musí být název, IP adresa nebo alias z ~/.ssh/config.")
+
+
 def validate(api, connection):
     if not isinstance(connection, dict) or connection.get("version") != 1:
         raise api.OutsError("Nepodporovaný formát připojení.")
     connection_path(api, connection.get("id"))
     kind = connection.get("type")
-    if kind not in TYPES:
+    if not isinstance(kind, str) or kind not in TYPES:
         raise api.OutsError("Připojení musí být RDP, SSH nebo virt-viewer.")
     def text(value, label, required=True):
         if not isinstance(value, str) or (required and not value.strip()) or any(c in value for c in "\0\n\r"):
@@ -79,9 +92,7 @@ def validate(api, connection):
     if any(key.lower() in {"password", "private_key", "master_password"} for key in record):
         raise api.OutsError("Hesla a privátní klíče patří do KeePassXC, ne do připojení.")
     if kind in {"rdp", "ssh"}:
-        host = record.get("host", "")
-        if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.:%-]*", host):
-            raise api.OutsError("Server musí být název, IP adresa nebo alias z ~/.ssh/config.")
+        validate_host(api, record.get("host", ""))
         text(record.get("username", ""), "uživatel", required=kind == "rdp")
         port = record.get("port")
         if port is not None and (type(port) is not int or not 1 <= port <= 65535):
@@ -94,7 +105,7 @@ def validate(api, connection):
         if not isinstance(record.get("keepass"), dict):
             raise api.OutsError("Zadejte UUID položky KeePassXC s RDP heslem.")
         api.merge_rdp_options(["freerdp"], record.get("freerdp_args", []))
-    if record.get("keepass"):
+    if kind == "rdp" or record.get("keepass"):
         credential = record["keepass"]
         if not isinstance(credential, dict):
             raise api.OutsError("Neplatný odkaz na KeePassXC.")
@@ -180,9 +191,20 @@ def save(api, connection, previous=None):
 
 def select_connection(api):
     rows = []
+    invalid = []
     for path in sorted(data_dir(api).glob("*.json")):
-        connection = load(api, path.stem)
+        try:
+            connection = load(api, path.stem)
+        except (api.OutsError, OSError, UnicodeError):
+            invalid.append(str(path))
+            continue
         rows.append((connection["id"], f"{connection['name']} — {TYPES[connection['type']]}"))
+    if invalid:
+        message = ("Následující připojení nelze načíst. Jejich soubory zůstaly beze změn; "
+                   "opravte je nebo je přesuňte mimo adresář připojení:\n\n" + "\n".join(invalid))
+        if not rows:
+            raise api.OutsError(message)
+        dialog(api, "--warning", "--text=" + message)
     return load(api, choose(api, "Vyberte připojení.", rows))
 
 
@@ -254,7 +276,16 @@ def edit_connection(api, previous=None):
     connection["name"] = ask("name", "Název zástupce v nabídce aplikací", connection.get("name", ""))
     record = connection["record"]
     if kind in {"rdp", "ssh"}:
-        record["host"] = ask("host", "Alias z ~/.ssh/config nebo server" if kind == "ssh" else "Adresa RDP serveru", record.get("host", ""))
+        host_label = "Alias z ~/.ssh/config nebo server" if kind == "ssh" else "Adresa RDP serveru"
+        host = ask("host", host_label, record.get("host", ""))
+        while True:
+            try:
+                validate_host(api, host)
+                break
+            except api.OutsError as exc:
+                dialog(api, "--error", "--text=" + str(exc))
+                host = entry(api, host_label, host)
+        record["host"] = host
         username = ask("username", "Uživatel (prázdné = podle SSH konfigurace)" if kind == "ssh" else "Uživatel Windows", record.get("username", ""), required=kind == "rdp")
         if username:
             record["username"] = username

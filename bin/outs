@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import json
 import getpass
+import ipaddress
 import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -63,12 +65,12 @@ def usage() -> str:
   outs <firma> vpn-down <profil>
 
 Příklady:
-  outs dot
-  outs desktop dotname rdp win11-pribram
-  outs desktop dotname rdp win11-pribram --name "Windows 11 Příbram"
-  outs hck ssh prx1
-  outs dotname rdp musicbox
-  outs dotname web broucek
+  outs example
+  outs desktop example rdp workstation
+  outs desktop example rdp workstation --name "Pracovní Windows"
+  outs example ssh bastion
+  outs example rdp workstation
+  outs example web portal
 """
 
 
@@ -127,6 +129,17 @@ def log_event(event: str, **fields) -> None:
         SESSION_LOG.write(event, **fields)
 
 
+def rdp_exit_status(result: int, *, cancelled: bool = False) -> int:
+    # FreeRDP SDL rozlišuje odpojení (1), odhlášení (2), zavření uživatelem
+    # (11) a zrušení připojení (145). Tyto výsledky nejsou chyba spojení.
+    # Starší SDL klient může po zavření vrátit i obecnou chybu 131;
+    # samotná 131 nestačí, potřebujeme potvrzení zrušení z diagnostiky.
+    if result in {1, 2, 11, 145} or (result == 131 and cancelled):
+        log_event("RDP relace ukončena bez chyby", původní_kód=result)
+        return 0
+    return result
+
+
 def wait_for_client(process, *, rdp: bool = False) -> int:
     cancelled = False
     # Čteme pouze diagnostický proud; obsah vzdáleného terminálu se nezaznamenává.
@@ -142,12 +155,7 @@ def wait_for_client(process, *, rdp: bool = False) -> int:
                     sys.stderr.flush()
     result = process.wait()
     log_event("klient skončil", návratový_kód=result)
-    # FreeRDP 3.31.1 může po zavření SDL okna vrátit obecnou chybu 131.
-    # Samotná 131 nestačí: potřebujeme i potvrzení zrušení od klienta.
-    if rdp and (result in {1, 2, 11, 145} or (result == 131 and cancelled)):
-        log_event("RDP relace ukončena bez chyby", původní_kód=result)
-        return 0
-    return result
+    return rdp_exit_status(result, cancelled=cancelled) if rdp else result
 
 
 def run(command: list[str]) -> int:
@@ -241,23 +249,16 @@ def report_detached_rdp(process: subprocess.Popen[bytes]) -> int:
     if return_code is None:
         print(f"RDP běží na pozadí (PID {process.pid}).", flush=True)
         return 0
+    log_event("klient skončil", návratový_kód=return_code)
+    if rdp_exit_status(return_code) == 0:
+        return 0
     warn_if_vpn_active(return_code)
     raise OutsError(f"FreeRDP skončil s kódem {return_code}; spusťte jej s --debug.")
 
 
 def run_detached(command: list[str]) -> int:
-    """Start a GUI process independently without persisting its output."""
-    try:
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            **detached_process_options(),
-        )
-    except OSError as exc:
-        raise OutsError(f"Program '{command[0]}' nelze spustit: {exc}") from exc
-    return report_detached_rdp(process)
+    """Spustit samostatné okno RDP bez pomocného terminálu."""
+    return run_rdp(command, detached=True)
 
 
 def normalized_uuid(value: str) -> str:
@@ -407,6 +408,18 @@ def lookup_keepass_attachment(credential: dict[str, Any]) -> bytearray:
         entry_path, expected_uuid = find_keepass_entry_path(
             credential.get("uuid"), database, key_file, master_password
         )
+        identity = run_keepass_cli(
+            [require_program("keepassxc-cli"), "show", "-q",
+             *(["-k", str(key_file)] if key_file else []),
+             "-a", "Uuid", str(database), entry_path],
+            master_password,
+        )
+        try:
+            actual_uuid = normalized_uuid(identity.stdout.decode("ascii", errors="strict"))
+        except (UnicodeDecodeError, OutsError) as exc:
+            raise OutsError("KeePassXC neověřil UUID SSH položky; klíč nebyl použit.") from exc
+        if identity.returncode != 0 or actual_uuid != expected_uuid:
+            raise OutsError("KeePassXC vrátil jinou SSH položku; klíč nebyl použit.")
         result = run_keepass_cli(
             [
                 require_program("keepassxc-cli"),
@@ -562,22 +575,28 @@ def lookup_keepass_web(credential: dict[str, Any]) -> tuple[str, str]:
     return url, username
 
 
-def run_rdp_with_password(
-    command: list[str], password: bytearray, detached: bool
+def run_rdp(
+    command: list[str], *, detached: bool, password: bytearray | None = None
 ) -> int:
-    """Send FreeRDP arguments over stdin, detach and wipe mutable buffers."""
+    """Společné spuštění RDP s ručním heslem nebo chráněným vstupem z KeePassXC."""
     process: subprocess.Popen[bytes] | None = None
     payload = bytearray()
     handed_off = False
     try:
-        for argument in command[1:]:
-            if "\n" in argument or "\r" in argument:
-                raise OutsError("RDP parametr obsahuje nepovolený konec řádku.")
-            payload.extend(argument.encode("utf-8"))
+        for argument in command:
+            if any(character in argument for character in "\0\r\n"):
+                raise OutsError("RDP parametr nesmí obsahovat NUL ani konec řádku.")
+        if password is not None:
+            # /args-from:stdin je řádkový protokol. Heslo nesmí ukončit svůj
+            # řádek a přidat další přepínač ani se zkrátit na vloženém NUL.
+            if any(character in password for character in (0, 10, 13)):
+                raise OutsError("RDP heslo nesmí obsahovat NUL ani konec řádku.")
+            for argument in command[1:]:
+                payload.extend(argument.encode("utf-8"))
+                payload.append(10)
+            payload.extend(b"/p:")
+            payload.extend(password)
             payload.append(10)
-        payload.extend(b"/p:")
-        payload.extend(password)
-        payload.append(10)
 
         process_options: dict[str, Any] = {}
         if detached:
@@ -592,17 +611,19 @@ def run_rdp_with_password(
                 process_options["stdout"] = subprocess.DEVNULL
         log_event("spuštění klienta RDP")
         process = subprocess.Popen(
-            [command[0], "/args-from:stdin"],
-            stdin=subprocess.PIPE,
+            [command[0], "/args-from:stdin"] if password is not None else command,
+            stdin=subprocess.PIPE if password is not None else (subprocess.DEVNULL if detached else None),
             **process_options,
         )
-        if process.stdin is None:
-            raise OutsError(f"Program '{command[0]}' nepřijal standardní vstup.")
-        process.stdin.write(payload)
-        process.stdin.close()
+        if password is not None:
+            if process.stdin is None:
+                raise OutsError(f"Program '{command[0]}' nepřijal standardní vstup.")
+            process.stdin.write(payload)
+            process.stdin.close()
         handed_off = True
-        for index in range(len(password)):
-            password[index] = 0
+        if password is not None:
+            for index in range(len(password)):
+                password[index] = 0
         for index in range(len(payload)):
             payload[index] = 0
         if detached:
@@ -611,12 +632,26 @@ def run_rdp_with_password(
     except OSError as exc:
         raise OutsError(f"Program '{command[0]}' nelze spustit: {exc}") from exc
     finally:
-        for index in range(len(password)):
-            password[index] = 0
+        if password is not None:
+            for index in range(len(password)):
+                password[index] = 0
         for index in range(len(payload)):
             payload[index] = 0
-        if not handed_off and process is not None and process.poll() is None:
+        if process is not None and process.poll() is None and (not handed_off or not detached):
+            # Čekající klient patří této relaci; přerušení launcheru jej nesmí
+            # zanechat běžet. Již předané samostatné okno naopak zachováme.
             process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+
+def run_rdp_with_password(
+    command: list[str], password: bytearray, detached: bool
+) -> int:
+    return run_rdp(command, detached=detached, password=password)
 
 
 def print_companies() -> None:
@@ -830,14 +865,15 @@ def display_command(command: list[str]) -> str:
 
 
 def desktop_exec_argument(value: str) -> str:
-    """Quote one argument according to the Desktop Entry Exec field rules."""
+    """Uvozování argumentu Exec včetně escapování hodnoty desktopového klíče."""
     value = value.replace("%", "%%")
     escaped = "".join(f"\\{character}" if character in '\"`$\\' else character for character in value)
-    return f'"{escaped}"'
+    # Desktopový parser nejprve odstraní escapování hodnoty, pak uvozování Exec.
+    return desktop_text(f'"{escaped}"')
 
 
 def desktop_text(value: str) -> str:
-    """Escape a localized string value used in a desktop entry."""
+    """Escapování textové hodnoty v desktopovém souboru."""
     return (
         value.replace("\\", "\\\\")
         .replace("\n", "\\n")
@@ -847,11 +883,21 @@ def desktop_text(value: str) -> str:
 
 
 def launcher_executable() -> Path:
-    """Return a stable absolute path for shortcuts launched outside a shell."""
+    """Stabilní cesta ke stejné instalaci, která právě vytváří zástupce."""
     packaged = os.environ.get("OUTSOURCE_EXECUTABLE")
     if packaged:
-        system_launcher = Path("/run/current-system/sw/bin/outs")
-        return system_launcher if system_launcher.exists() else Path(packaged)
+        current = Path(packaged).expanduser()
+        candidates = [Path("/run/current-system/sw/bin/outs"), Path.home() / ".nix-profile/bin/outs"]
+        discovered = shutil.which("outs")
+        if discovered:
+            candidates.append(Path(discovered))
+        for candidate in candidates:
+            try:
+                if candidate.is_file() and candidate.resolve() == current.resolve():
+                    return candidate
+            except OSError:
+                continue
+        return current
     invoked = Path(sys.argv[0]).expanduser()
     if invoked.parent != Path(".") or invoked.is_absolute():
         return invoked.resolve()
@@ -1012,10 +1058,18 @@ def handle_rdp(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
         raise OutsError(f"Neplatný RDP alias '{target}'.")
     record = find_record(config, "rdp", target)
 
+    host = record["host"]
+    try:
+        ipaddress.IPv6Address(host)
+    except ValueError:
+        pass
+    else:
+        # FreeRDP potřebuje oddělit IPv6 adresu od následujícího portu.
+        host = f"[{host}]"
     window_class = rdp_window_class(client_id, target)
     command = [
         select_rdp_client(),
-        f"/v:{record['host']}:{record.get('port', 3389)}",
+        f"/v:{host}:{record.get('port', 3389)}",
         f"/u:{record['username']}",
         "/sec:nla",
         "/network:auto",
@@ -1085,7 +1139,7 @@ def handle_rdp(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
         )
         if debug:
             print("Diagnostický režim: výstup FreeRDP je živě v tomto terminálu.", flush=True)
-            return warn_if_vpn_active(run(command))
+            return run_rdp(command, detached=False)
         return run_detached(command)
 
     credential = record.get("keepass")
@@ -1186,6 +1240,39 @@ def handle_web(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
     return 0
 
 
+def vpn_runtime_tools():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("outs_vpn_runtime", ROOT / "bin" / "vpn_runtime.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def vpn_profile_uuid(nmcli: str, selector: str, value: str) -> str | None:
+    result = subprocess.run(
+        [nmcli, "-g", "connection.uuid", "connection", "show", selector, value],
+        check=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+    if result.returncode == 10:
+        return None
+    if result.returncode != 0:
+        raise OutsError("Nelze ověřit stav VPN profilu v NetworkManageru.")
+    value = result.stdout.decode("ascii", errors="replace").strip()
+    if not NM_UUID_RE.fullmatch(value):
+        raise OutsError("NetworkManager nevrátil jednoznačné UUID VPN profilu.")
+    return value
+
+
+def delete_vpn_profile(nmcli: str, uuid: str) -> bool:
+    # Smazání zároveň deaktivuje spojení; při neúspěchu musí certifikáty zůstat
+    # dostupné a uložené UUID umožní opakovat vpn-down.
+    result = subprocess.run(
+        [nmcli, "connection", "delete", "uuid", uuid],
+        check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0 or vpn_profile_uuid(nmcli, "uuid", uuid) is None
+
+
 def handle_vpn(client_id: str, config: dict[str, Any], action: str, arguments: list[str]) -> int:
     records = config.get("vpn", [])
     if action == "vpn":
@@ -1203,141 +1290,111 @@ def handle_vpn(client_id: str, config: dict[str, Any], action: str, arguments: l
         raise OutsError(f"VPN typ '{record.get('type')}' zatím nelze spustit.")
 
     nmcli = require_program("nmcli")
-    runtime_name = f"outs-{client_id}-{record['id']}"
-    if action == "vpn-down":
-        subprocess.run(
-            [nmcli, "connection", "down", "id", runtime_name],
-            check=False,
-        )
-        result = subprocess.run(
-            [nmcli, "connection", "delete", "id", runtime_name],
-            check=False,
-        )
-        if result.returncode != 0:
-            raise OutsError(f"Dočasný VPN profil '{runtime_name}' nelze odstranit.")
-        return 0
-
-    credential = record.get("keepass")
-    if not isinstance(credential, dict):
-        raise OutsError(f"VPN profilu {client_id}/{record['id']} chybí objekt keepass.")
-
-    existing = subprocess.run(
-        [nmcli, "-g", "UUID", "connection", "show", "id", runtime_name],
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    if existing.returncode == 0:
-        raise OutsError(
-            f"VPN profil '{runtime_name}' už existuje; nejprve použijte vpn-down."
-        )
-
-    print(f"Odemykám KeePass pro {client_id}/{record['id']}…", flush=True)
-    profile, vpn_username, vpn_password = lookup_keepass_vpn(credential)
-    profile_path: Path | None = None
-    password_path: Path | None = None
-    imported_uuid: str | None = None
+    runtime_tools = vpn_runtime_tools()
     try:
-        with tempfile.NamedTemporaryFile(
-            prefix=f"outs-{client_id}-{record['id']}-",
-            suffix=".ovpn",
-            delete=False,
-        ) as profile_file:
-            profile_path = Path(profile_file.name)
-            profile_file.write(profile)
-        profile_path.chmod(0o600)
-
-        imported = subprocess.run(
-            [
-                nmcli,
-                "connection",
-                "import",
-                "--temporary",
-                "type",
-                "openvpn",
-                "file",
-                str(profile_path),
-            ],
-            check=False,
-            stdout=subprocess.PIPE,
-        )
-        if imported.returncode != 0:
-            raise OutsError("OpenVPN přílohu nelze importovat do NetworkManageru.")
-        output = imported.stdout.decode("utf-8", errors="replace")
-        match = NM_UUID_RE.search(output)
-        if match is None:
-            raise OutsError("NetworkManager nevrátil UUID importovaného VPN profilu.")
-        imported_uuid = match.group(0)
-
-        if run(
-            [nmcli, "connection", "modify", "uuid", imported_uuid, "connection.id", runtime_name]
-        ) != 0:
-            raise OutsError("Importovaný VPN profil nelze přejmenovat.")
-        if run(
-            [
-                nmcli,
-                "connection",
-                "modify",
-                "uuid",
-                imported_uuid,
-                "+vpn.data",
-                f"username={vpn_username}",
-            ]
-        ) != 0:
-            raise OutsError("Do importovaného VPN profilu nelze nastavit uživatelské jméno.")
-
-        password_payload = bytearray(b"vpn.secrets.password:")
-        password_payload.extend(vpn_password)
-        password_payload.append(10)
-        try:
-            with tempfile.NamedTemporaryFile(
-                prefix=f"outs-{client_id}-{record['id']}-",
-                suffix=".passwd",
-                delete=False,
-            ) as password_file:
-                password_path = Path(password_file.name)
-                password_file.write(password_payload)
-            password_path.chmod(0o600)
-        finally:
-            for index in range(len(password_payload)):
-                password_payload[index] = 0
-
-        if run(
-            [
-                nmcli,
-                "connection",
-                "up",
-                "uuid",
-                imported_uuid,
-                "passwd-file",
-                str(password_path),
-            ]
-        ) != 0:
-            raise OutsError(f"VPN {client_id}/{record['id']} se nepodařilo aktivovat.")
-        print(f"VPN {client_id}/{record['id']} je aktivní jako {runtime_name}.", flush=True)
-        return 0
-    finally:
-        for index in range(len(profile)):
-            profile[index] = 0
-        for index in range(len(vpn_password)):
-            vpn_password[index] = 0
-        if profile_path is not None:
+        with runtime_tools.VpnRuntime(client_id, record["id"]) as runtime:
+            state = runtime.read()
+            if state is None:
+                # Runtime stav zaniká i při odhlášení, zatímco NM může běžet dál.
+                # Profil bez stavu nepřebíráme ani nemažeme podle samotného názvu.
+                for name in (runtime.name, f"outs-{client_id}-{record['id']}"):
+                    unmanaged_uuid = vpn_profile_uuid(nmcli, "id", name)
+                    if unmanaged_uuid is not None:
+                        raise OutsError(
+                            "Existuje VPN profil bez spravovaného runtime stavu. "
+                            "Ověřte jej v NetworkManageru; pro odpojení a odstranění použijte "
+                            f"'nmcli connection down uuid {unmanaged_uuid}' a "
+                            f"'nmcli connection delete uuid {unmanaged_uuid}'. "
+                            "Poté opakujte příkaz Outsource."
+                        )
+            if action == "vpn-down":
+                if state is None:
+                    print("VPN nemá uložený runtime profil.")
+                    return 0
+                uuid = state.get("uuid") or vpn_profile_uuid(nmcli, "id", state["import_name"])
+                if uuid is not None and not delete_vpn_profile(nmcli, uuid):
+                    raise OutsError("VPN profil nelze odstranit; jeho runtime stav zůstává pro další vpn-down.")
+                runtime.cleanup()
+                return 0
+            if state is not None:
+                raise OutsError("VPN má uložený runtime stav; nejprve použijte vpn-down.")
+            credential = record.get("keepass")
+            if not isinstance(credential, dict):
+                raise OutsError(f"VPN profilu {client_id}/{record['id']} chybí objekt keepass.")
+            print(f"Odemykám KeePass pro {client_id}/{record['id']}…", flush=True)
+            profile, vpn_username, vpn_password = lookup_keepass_vpn(credential)
+            profile_path = password_path = None
+            state = None
+            keep_runtime = False
+            import_started = False
             try:
-                profile_path.unlink(missing_ok=True)
-            except OSError as exc:
-                print(f"Varování: dočasný OpenVPN profil nelze odstranit: {exc}", file=sys.stderr)
-        if password_path is not None:
-            try:
-                password_path.unlink(missing_ok=True)
-            except OSError as exc:
-                print(f"Varování: dočasný soubor VPN hesla nelze odstranit: {exc}", file=sys.stderr)
-        if sys.exc_info()[0] is not None and imported_uuid is not None:
-            subprocess.run(
-                [nmcli, "connection", "delete", "uuid", imported_uuid],
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+                runtime.begin()
+                with tempfile.NamedTemporaryFile(
+                    prefix=runtime.name + "-", suffix=".ovpn", dir=runtime.path, delete=False,
+                ) as stream:
+                    profile_path = Path(stream.name)
+                    stream.write(profile)
+                state = {"uuid": None, "import_name": profile_path.stem}
+                # Název zapisujeme před importem: po přerušení lze najít i profil,
+                # jehož UUID proces ještě nestačil převzít.
+                runtime.save(state)
+                import_started = True
+                imported = subprocess.run(
+                    [nmcli, "connection", "import", "--temporary", "type", "openvpn", "file", str(profile_path)],
+                    check=False, stdout=subprocess.PIPE,
+                    env={**os.environ, "LC_ALL": "C", "NM_CERT_PATH": str(runtime.path)},
+                )
+                if imported.returncode != 0:
+                    raise OutsError("OpenVPN přílohu nelze importovat do NetworkManageru.")
+                output = imported.stdout.decode("utf-8", errors="replace").strip()
+                match = re.fullmatch(
+                    r"Connection '[^\r\n]*' \((" + NM_UUID_RE.pattern + r")\) successfully added\.", output,
+                )
+                if match is None:
+                    raise OutsError("NetworkManager nevrátil UUID importovaného VPN profilu.")
+                state["uuid"] = match.group(1)
+                runtime.save(state)
+                uuid = state["uuid"]
+                if run([nmcli, "connection", "modify", "--temporary", "uuid", uuid, "connection.id", runtime.name]) != 0:
+                    raise OutsError("Importovaný VPN profil nelze přejmenovat.")
+                if run([nmcli, "connection", "modify", "--temporary", "uuid", uuid, "+vpn.data", f"username={vpn_username}"]) != 0:
+                    raise OutsError("Do importovaného VPN profilu nelze nastavit uživatelské jméno.")
+                payload = bytearray(b"vpn.secrets.password:")
+                payload.extend(vpn_password)
+                payload.append(10)
+                try:
+                    with tempfile.NamedTemporaryFile(dir=runtime.path, suffix=".passwd", delete=False) as stream:
+                        password_path = Path(stream.name)
+                        stream.write(payload)
+                finally:
+                    for index in range(len(payload)):
+                        payload[index] = 0
+                if run([nmcli, "connection", "up", "uuid", uuid, "passwd-file", str(password_path)]) != 0:
+                    raise OutsError(f"VPN {client_id}/{record['id']} se nepodařilo aktivovat.")
+                keep_runtime = True
+                print(f"VPN {client_id}/{record['id']} je aktivní.", flush=True)
+                return 0
+            finally:
+                for buffer in (profile, vpn_password):
+                    for index in range(len(buffer)):
+                        buffer[index] = 0
+                for path in (profile_path, password_path):
+                    if path is not None:
+                        try:
+                            path.unlink(missing_ok=True)
+                        except OSError:
+                            print("Varování: soukromý runtime soubor VPN nelze odstranit; opakujte vpn-down.", file=sys.stderr)
+                if not keep_runtime:
+                    try:
+                        uuid = (state.get("uuid") or vpn_profile_uuid(nmcli, "id", state["import_name"])) if import_started else None
+                        if uuid is None or delete_vpn_profile(nmcli, uuid):
+                            runtime.cleanup()
+                        else:
+                            print("Varování: VPN profil zůstává uložen pro další vpn-down.", file=sys.stderr)
+                    except (OSError, OutsError):
+                        print("Varování: stav VPN nelze ověřit; runtime soubory zůstávají pro další vpn-down.", file=sys.stderr)
+    except runtime_tools.VpnError as exc:
+        raise OutsError(str(exc)) from exc
 
 
 def dispatch_action(
@@ -1386,6 +1443,15 @@ def ask_password(prompt: str) -> str:
 
 class Cancelled(Exception):
     """Uživatel zavřel dialog; nic dalšího neprovádíme."""
+
+
+def install_signal_handlers() -> None:
+    def exit_on_signal(signum, _frame):
+        # Vyvolání výjimky zachová úklid klíčů a VPN v běžných finally blocích.
+        raise SystemExit(128 + signum)
+
+    for signum in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signum, exit_on_signal)
 
 
 def run_main(arguments: list[str]) -> int:
@@ -1439,6 +1505,10 @@ def main(arguments: list[str]) -> int:
     except (Cancelled, KeyboardInterrupt):
         log_event("zrušeno uživatelem")
         raise
+    except SystemExit as exc:
+        if exc.code in (128 + signal.SIGTERM, 128 + signal.SIGHUP):
+            log_event("zrušeno signálem", signál=exc.code - 128)
+        raise
     except Exception as exc:
         # Text výjimky může obsahovat cestu k trezoru nebo přílohu; neukládáme jej.
         log_event("chyba", fáze=SESSION_LOG.stage, typ=type(exc).__name__, errno=getattr(exc, "errno", None))
@@ -1449,6 +1519,7 @@ def main(arguments: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    install_signal_handlers()
     try:
         raise SystemExit(main(sys.argv[1:]))
     except Cancelled:

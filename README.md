@@ -1,8 +1,27 @@
-# Vzdálená připojení
+# Outsource
 
 Jednoduchý průvodce pro zástupce RDP, SSH a virt-viewer v nabídce GNOME.
 Nix instaluje program a potřebné klienty. Připojení si pak přidáváš a upravuješ
 za běhu, bez úprav Nixu, JSON souborů nebo nového sestavení systému.
+
+## Instalace
+
+Samostatný projekt obsahuje Nix balíček a volitelný modul NixOS. Z checkoutu:
+
+```bash
+nix run . -- manage
+nix build
+```
+
+Pro instalaci do uživatelského profilu použij `nix profile install .`.
+V nabídce aplikací se objeví správce i průvodce pro nové připojení.
+NixOS může přidat `outsource.nixosModules.default` mezi moduly a nastavit
+`programs.outsource.enable = true`. Volba `programs.outsource.package` dovoluje
+zvolit vlastní balíček, například s jinou variantou KeePassXC.
+
+Síť, aktivaci NetworkManageru, OpenVPN plugin a oprávnění k libvirt nastavuje
+hostitelský systém. Modul je automaticky nemění. Uživatelská data se při
+instalaci ani aktualizaci nepřesouvají.
 
 ## Přidání připojení
 
@@ -67,7 +86,7 @@ outs keepass
 Průvodce používá `keepassxc-cli`: i když máš trezor otevřený v aplikaci KeePassXC,
 požádá při čtení znovu o hlavní heslo. Podporuje hlavní heslo a volitelný souborový
 klíč. Hesla ani privátní klíče neukládá do zástupců nebo Nix store.
-Podrobnosti najdeš v [návodu ke KeePassXC](docs/keepassxc.md).
+Podrobnosti a životnost dočasných VPN klíčů najdeš v [návodu ke KeePassXC](docs/keepassxc.md).
 
 SSH ve výchozím režimu trezor neotvírá. Pokud máš klíče v KeePassXC, můžeš využít
 jeho integraci se SSH agentem a v průvodci ponechat systémové přihlášení.
@@ -124,14 +143,26 @@ Jejich volitelné profily se načítají z `~/.config/outsource/clients/<firma>/
 
 ## Vývoj a ověření
 
-Z kořene nixonu:
+Z kořene tohoto projektu:
 
 ```bash
-python3 -m unittest discover -s applications/outsource/tests
-nix build path:.#outsource
+python3 -m unittest discover -s tests -v
+nix flake check --no-update-lock-file
+nix build --no-update-lock-file
 ```
 
-Balíček definuje `applications/outsource/package.nix`; systémové zapojení a položky
-průvodce v nabídce GNOME jsou v `applications/outsource/default.nix`.
-Nová verze programu se systémově zpřístupní po obvyklém sestavení a aktivaci NixOS.
-Další přidávání připojení už aktivaci nepotřebuje.
+Testy používají dočasné adresáře a náhrady klientů; neotevírají skutečné připojení
+ani trezor. Regrese `Exec` používá skutečný parser Gio. Při spuštění mimo Nix
+je pro tuto kontrolu potřeba `gio`; bez něj se příslušný test přeskočí.
+
+[package.nix](package.nix) balí program, klienty a desktopové soubory.
+[module.nix](module.nix) přidává balíček do NixOS. Vlastní GNOME Console poskytuje
+automatické zavření SSH terminálu a identitu jeho okna; důvod a podmínku odstranění
+výjimky popisuje recept. Běžná GNOME Console zůstává samostatná.
+
+CI ověřuje flake, testy a sestavení bez místních checkoutů. Build nenahrazuje
+aktivaci ani živé ověření přiřazení nového okna k ikoně v GNOME.
+Nová systémová verze se zpřístupní po sestavení a aktivaci hostitele;
+další přidávání připojení už aktivaci nepotřebuje.
+
+Licence: [MIT](LICENSE).

@@ -4,8 +4,11 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
+import shutil
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -73,6 +76,121 @@ class ConnectionTests(unittest.TestCase):
                 connections.save(self.api, connection)
         self.assertFalse(connections.data_dir(self.api).exists())
 
+    def test_ip_addresses_and_existing_ssh_aliases_are_valid(self):
+        for host in ['::1', '::ffff:192.0.2.1', '2001:db8::1', 'fe80::1%eth0',
+                     '192.0.2.1', 'server.example.', 'pracovni-alias', '_local', 'alias%user']:
+            with self.subTest(host=host):
+                connection = copy.deepcopy(self.connection)
+                connection['record']['host'] = host
+                connections.validate(self.api, connection)
+        for host in ['-oProxyCommand=bad', '[::1]', 'invalid:address', 'server/name', '', None,
+                     'fe80::1%bad\nname', 'fe80::1%bad\x00name', 'fe80::1%bad;name']:
+            with self.subTest(host=host), self.assertRaises(outs.OutsError):
+                connections.validate_host(self.api, host)
+
+    def test_launcher_uses_only_stable_paths_to_its_own_package(self):
+        package = self.root / 'package/bin/outs'
+        other = self.root / 'other-package/bin/outs'
+        for path in [package, other]:
+            path.parent.mkdir(parents=True)
+            path.write_text('fixture')
+        system = self.root / 'system/bin/outs'
+        profile = self.root / 'home/.nix-profile/bin/outs'
+        discovered = self.root / 'path/bin/outs'
+        for path in [system, profile, discovered]:
+            path.parent.mkdir(parents=True)
+        original_path = Path
+        def mapped_path(value):
+            return system if value == '/run/current-system/sw/bin/outs' else original_path(value)
+        scenarios = [
+            (package, package, package, system),
+            (other, package, package, profile),
+            (None, None, package, discovered),
+            (other, other, other, package),
+        ]
+        for system_target, profile_target, path_target, expected in scenarios:
+            with self.subTest(expected=expected):
+                for path, target in zip([system, profile, discovered], [system_target, profile_target, path_target]):
+                    path.unlink(missing_ok=True)
+                    if target:
+                        path.symlink_to(target)
+                with patch.dict(os.environ, {'OUTSOURCE_EXECUTABLE': str(package)}), \
+                     patch.object(outs, 'Path', side_effect=mapped_path) as paths, \
+                     patch.object(outs.shutil, 'which', return_value=str(discovered)):
+                    paths.home.return_value = self.root / 'home'
+                    self.assertEqual(outs.launcher_executable(), expected)
+
+    def test_bad_profiles_warn_without_hiding_healthy_connections(self):
+        connections.save(self.api, self.connection)
+        directory = connections.data_dir(self.api)
+        broken = {
+            'b' * 32 + '.json': b'{ broken json',
+            'c' * 32 + '.json': b'\xff',
+            'd' * 32 + '.json': json.dumps({**self.connection, 'id': 'd' * 32, 'type': []}).encode(),
+        }
+        for name, contents in broken.items():
+            (directory / name).write_bytes(contents)
+        with patch.object(connections, 'dialog') as warning, \
+             patch.object(connections, 'choose', return_value=self.connection['id']) as choose:
+            self.assertEqual(connections.select_connection(self.api), self.connection)
+        self.assertIn('--warning', warning.call_args.args)
+        text = next(arg for arg in warning.call_args.args if isinstance(arg, str) and arg.startswith('--text='))
+        for name, contents in broken.items():
+            self.assertIn(name, text)
+            self.assertEqual((directory / name).read_bytes(), contents)
+        self.assertEqual([row[0] for row in choose.call_args.args[2]], [self.connection['id']])
+
+    def test_only_bad_profiles_report_paths_without_an_empty_chooser(self):
+        path = connections.connection_path(self.api, 'b' * 32)
+        path.parent.mkdir(parents=True)
+        path.write_text('{ broken json')
+        with patch.object(connections, 'choose') as choose, \
+             self.assertRaisesRegex(outs.OutsError, path.name):
+            connections.select_connection(self.api)
+        choose.assert_not_called()
+        self.assertEqual(path.read_text(), '{ broken json')
+
+    @unittest.skipUnless(shutil.which('gio'), 'Gio není dostupné pro kontrolu desktopového parseru.')
+    def test_ssh_desktop_arguments_round_trip_through_gio(self):
+        # Spouštíme jen vlastní fixture zapisující argv, nikoli terminál či SSH.
+        program_dir = self.root / 'bin "quoted" $value'
+        program_dir.mkdir()
+        launcher = program_dir / 'outs'
+        self.api.launcher_executable = lambda: launcher
+        capture_path = self.root / 'captured.json'
+        terminal = launcher.with_name('outs-terminal')
+        terminal.write_text(
+            '#!' + sys.executable + '\n'
+            'import json, os, sys\n'
+            'from pathlib import Path\n'
+            'target = Path(os.environ["OUTSOURCE_TEST_CAPTURE"])\n'
+            'temporary = target.with_suffix(".tmp")\n'
+            'temporary.write_text(json.dumps(sys.argv[1:]))\n'
+            'temporary.replace(target)\n'
+        )
+        terminal.chmod(0o700)
+        env = {**os.environ, 'OUTSOURCE_TEST_CAPTURE': str(capture_path)}
+        names = ['Server "práce"', 'Server $value', 'Server `literal`',
+                 r'Server\práce', r'Server\\práce', 'Server %U', 'Server\ttab']
+        for name in names:
+            with self.subTest(name=name):
+                capture_path.unlink(missing_ok=True)
+                self.connection['name'] = name
+                desktop = self.root / 'probe.desktop'
+                desktop.write_text(connections.desktop_contents(self.api, self.connection))
+                result = subprocess.run([shutil.which('gio'), 'launch', str(desktop)], env=env,
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                deadline = time.monotonic() + 5
+                while not capture_path.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(capture_path.exists(), 'Fixture nedostala argumenty.')
+                args = json.loads(capture_path.read_text())
+                self.assertEqual(args, [
+                    '--gapplication-app-id=org.nixon.outsource.ssh.c' + self.connection['id'],
+                    '--title=' + name, '--', str(launcher), 'connect', self.connection['id'],
+                ])
+
     def test_rdp_desktop_has_gui_and_matching_window_identity(self):
         self.connection.update(type='rdp', record={
             'host': 'server', 'username': 'tomas', 'keepass': {'uuid': 'b' * 32}})
@@ -104,6 +222,21 @@ class ConnectionTests(unittest.TestCase):
         self.assertNotIn('username', record)
         self.assertNotIn('port', record)
         self.assertNotIn('keepass', record)
+
+    def test_host_typo_can_be_corrected_without_losing_the_form(self):
+        form = {'name': 'Pracovní server', 'host': 'server/typo', 'username': 'tomas', 'port': '2222'}
+        with patch.object(connections, 'choose', side_effect=['ssh', 'config']), \
+             patch.object(connections, 'details_form', return_value=form), \
+             patch.object(connections, 'entry', return_value='::1') as entry, \
+             patch.object(connections, 'dialog', return_value='') as dialog:
+            connections.edit_connection(self.api)
+        entry.assert_called_once_with(self.api, 'Alias z ~/.ssh/config nebo server', 'server/typo')
+        self.assertIn('--error', dialog.call_args_list[0].args)
+        saved = json.loads(next(connections.data_dir(self.api).glob('*.json')).read_text())
+        self.assertEqual(saved['name'], 'Pracovní server')
+        self.assertEqual(saved['record']['host'], '::1')
+        self.assertEqual(saved['record']['username'], 'tomas')
+        self.assertEqual(saved['record']['port'], 2222)
 
     def test_ssh_config_and_agent_are_not_overridden(self):
         config = {'company': {'id': 'test'}, 'ssh': [{'id': 'server', 'host': 'alias'}]}
@@ -191,7 +324,7 @@ class ConnectionTests(unittest.TestCase):
             self.assertEqual(outs.keepass_paths(), (database, None))
 
     def test_dialog_uses_only_supported_button_options(self):
-        for kind in ['--info', '--error', '--file-selection', '--password']:
+        for kind in ['--info', '--error', '--warning', '--file-selection', '--password']:
             with patch.object(self.api, 'require_program', return_value='zenity'), \
                  patch.object(connections.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '', '')) as run:
                 connections.dialog(self.api, kind)

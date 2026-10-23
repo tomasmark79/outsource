@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Přidat vzdálené připojení
+Exec=outs new
+Icon=outs-ssh
+Terminal=false
+Categories=Network;RemoteAccess;
+StartupNotify=false

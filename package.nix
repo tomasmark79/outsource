@@ -12,10 +12,13 @@
   xdg-utils,
   zenity,
   gnome-console,
+  glib,
+  desktop-file-utils,
 }:
 let
-  # Vlastní varianta pro zástupce: po skončení příkazu zavře jeho okno.
-  # Běžnou GNOME Console ani její nastavení neměníme.
+  # GNOME Console 50 nemá CLI volbu pro zavření příkazové relace. Vlastní varianta
+  # ji zavře i po Ctrl+D a nastaví identitu X11 okna a ikonu SSH zástupce.
+  # Odstraň po upstream podpoře těchto voleb a ověření nového okna v GNOME.
   sshTerminal = gnome-console.overrideAttrs (old: {
     postPatch = (old.postPatch or "") + ''
       substituteInPlace src/kgx-application.c \
@@ -30,32 +33,42 @@ let
 in
 stdenvNoCC.mkDerivation {
   pname = "outsource";
-  version = "2.0.0";
+  version = "2.1.0";
   # Explicitní seznam: lokální nastavení a trezor se nesmějí dostat do store.
   src = lib.fileset.toSource {
     root = ./.;
     fileset = lib.fileset.unions [
-      ./bin/outs
-      ./bin/connections.py
-      ./bin/activity_log.py
+      (lib.fileset.fileFilter (file: file.name == "outs" || file.hasExt "py") ./bin)
       ./assets
+      ./LICENSE
+      ./README.md
+      (lib.fileset.fileFilter (file: file.hasExt "md") ./docs)
       (lib.fileset.fileFilter (file: file.hasExt "py") ./tests)
     ];
   };
   nativeBuildInputs = [ makeWrapper ];
-  nativeCheckInputs = [ python3 ];
+  nativeCheckInputs = [
+    python3
+    glib.bin
+    desktop-file-utils
+  ];
   dontBuild = true;
+  env.PYTHONDONTWRITEBYTECODE = "1";
   doCheck = true;
   checkPhase = ''
     runHook preCheck
     python3 -m unittest discover -s tests
+    desktop-file-validate assets/*.desktop
     runHook postCheck
   '';
   installPhase = ''
     runHook preInstall
-    mkdir -p "$out/share/outsource" "$out/bin" "$out/share/icons/hicolor/scalable/apps"
+    mkdir -p "$out/share/outsource" "$out/bin" "$out/share/icons/hicolor/scalable/apps" "$out/share/applications"
     cp -r bin assets "$out/share/outsource/"
     cp assets/*.svg "$out/share/icons/hicolor/scalable/apps/"
+    cp assets/*.desktop "$out/share/applications/"
+    mkdir -p "$out/share/doc/outsource"
+    cp LICENSE README.md docs/*.md "$out/share/doc/outsource/"
     makeWrapper ${sshTerminal}/bin/kgx "$out/bin/outs-terminal" \
       --run 'if [[ "$1" == --gapplication-app-id=* ]]; then export OUTSOURCE_TERMINAL_ID="''${1#*=}"; fi'
     makeWrapper ${python3}/bin/python3 "$out/bin/outs" \
@@ -78,6 +91,8 @@ stdenvNoCC.mkDerivation {
   meta = {
     description = "Průvodce vzdálenými připojeními a zástupci s KeePassXC";
     mainProgram = "outs";
+    homepage = "https://github.com/tomasmark79/outsource";
+    license = lib.licenses.mit;
     platforms = lib.platforms.linux;
   };
 }

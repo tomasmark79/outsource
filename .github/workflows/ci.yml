@@ -1,0 +1,21 @@
+name: Kontrola Outsource
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+concurrency:
+  group: outsource-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Testy a balíček bez místních checkoutů
+        run: |
+          nix flake check --no-update-lock-file --option allow-import-from-derivation false
+          nix build --no-update-lock-file --option allow-import-from-derivation false
+          git diff --exit-code -- flake.lock
