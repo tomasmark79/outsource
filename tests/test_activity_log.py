@@ -1,4 +1,4 @@
-"""Logování zkoušíme s falešným klientem a dočasným datovým adresářem."""
+"""Test logging with a fake client and a temporary data directory."""
 import importlib.util
 import json
 import os
@@ -35,15 +35,15 @@ class LogTests(unittest.TestCase):
         self.assertEqual(session.path.parent, self.root / 'logs/outsource')
         self.assertEqual(session.path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(session.path.parent.stat().st_mode & 0o777, 0o700)
-        session.write('test', návratový_kód=0)
-        self.assertEqual(json.loads(session.path.read_text())['návratový_kód'], 0)
+        session.write('test', exit_code=0)
+        self.assertEqual(json.loads(session.path.read_text())['exit_code'], 0)
 
     def test_main_records_result_and_no_command_arguments(self):
         with patch.object(outs, 'run_main', return_value=0):
             self.assertEqual(outs.main(['connect', 'a' * 32, '--gui', 'secret-argument']), 0)
         text = outs.LAST_LOG_PATH.read_text()
         self.assertIn('a' * 32, text)
-        self.assertIn('dokončeno', text)
+        self.assertIn('finished', text)
         self.assertNotIn('secret-argument', text)
         self.assertIsNone(outs.SESSION_LOG)
 
@@ -53,14 +53,14 @@ class LogTests(unittest.TestCase):
                 outs.main(['connect', 'a' * 32])
         text = outs.LAST_LOG_PATH.read_text()
         self.assertIn('OutsError', text)
-        self.assertIn('chyba', text)
+        self.assertIn('error', text)
         self.assertNotIn('secret-path-and-password', text)
 
     def test_cancel_has_a_separate_event(self):
         with patch.object(outs, 'run_main', side_effect=outs.Cancelled):
             with self.assertRaises(outs.Cancelled):
                 outs.main(['new'])
-        self.assertIn('zrušeno uživatelem', outs.LAST_LOG_PATH.read_text())
+        self.assertIn('canceled by user', outs.LAST_LOG_PATH.read_text())
 
     def test_diagnostics_discard_raw_text_and_unknown_codes(self):
         session = logs.SessionLog()
@@ -70,7 +70,7 @@ class LogTests(unittest.TestCase):
         session.diagnostic(b'ERRCONNECT_LOGON_FAILURE\n')
         text = session.path.read_text()
         self.assertIn('ERRCONNECT_LOGON_FAILURE', text)
-        self.assertIn('Server odmítl spojení.', text)
+        self.assertIn('The server refused the connection.', text)
         self.assertNotIn('secret', text)
         self.assertNotIn('PRIVATE_TOKEN', text)
         self.assertEqual(text.count('ERRCONNECT_LOGON_FAILURE'), 1)
@@ -94,7 +94,7 @@ sys.exit(5)
         self.assertEqual(set(password), {0})
         text = session.path.read_text()
         self.assertIn('ERRCONNECT_LOGON_FAILURE', text)
-        self.assertIn('"návratový_kód": 5', text)
+        self.assertIn('"exit_code": 5', text)
         self.assertNotIn('test-secret', text)
         self.assertNotIn('test-host', text)
 
@@ -145,7 +145,7 @@ sys.exit(5)
                             connections.connect(outs, connection['id'])
                     else:
                         self.assertEqual(connections.connect(outs, connection['id']), 0)
-                self.assertIn(f'"návratový_kód": {code}', session.path.read_text())
+                self.assertIn(f'"exit_code": {code}', session.path.read_text())
 
     def test_viewer_exit_is_not_interpreted_as_rdp_cancellation(self):
         import io
@@ -166,7 +166,7 @@ sys.exit(5)
             self.assertLessEqual(len(list(directory.glob('outs-*.log'))), 3)
             for _ in range(20):
                 session.write('test', data='x' * 200)
-            self.assertIn('Dosažen limit', session.path.read_text())
+            self.assertIn('Log size limit reached', session.path.read_text())
             self.assertLess(session.path.stat().st_size, 350)
 
 

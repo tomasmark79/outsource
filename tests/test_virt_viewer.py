@@ -38,7 +38,7 @@ class VirtViewerTests(unittest.TestCase):
     def test_launch_failure(self):
         with patch.object(outs.shutil, "which", return_value="/bin/virt-viewer"), \
              patch.object(outs.subprocess, "Popen", side_effect=OSError("unavailable")):
-            with self.assertRaisesRegex(outs.OutsError, "Virt-viewer nelze spustit"):
+            with self.assertRaisesRegex(outs.OutsError, "Cannot start virt-viewer"):
                 outs.handle_virt_viewer("test", self.config, ["vm"])
 
     def test_nix_fallback_quotes_domain(self):

@@ -1,5 +1,5 @@
 {
-  description = "Outsource: vzdálená připojení RDP, SSH a libvirt s KeePassXC";
+  description = "Outsource: remote RDP, SSH, and libvirt connections with KeePassXC";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
   outputs =
@@ -21,7 +21,7 @@
         default = {
           type = "app";
           program = nixpkgs.lib.getExe self.packages.${system}.default;
-          meta.description = "Správa vzdálených připojení";
+          meta.description = "Manage remote connections";
         };
       });
       checks = eachSystem (

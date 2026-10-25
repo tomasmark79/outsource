@@ -18,9 +18,9 @@
   desktop-file-utils,
 }:
 let
-  # GNOME Console 50 nemá CLI volbu pro zavření příkazové relace. Vlastní varianta
-  # ji zavře i po Ctrl+D a nastaví identitu X11 okna a ikonu SSH zástupce.
-  # Odstraň po upstream podpoře těchto voleb a ověření nového okna v GNOME.
+  # GNOME Console 50 has no CLI option to close a command session. This variant
+  # also closes on Ctrl+D and sets the X11 window identity and SSH launcher icon.
+  # Remove once upstream supports these options and a new window is verified in GNOME.
   sshTerminal = gnome-console.overrideAttrs (old: {
     postPatch = (old.postPatch or "") + ''
       substituteInPlace src/kgx-application.c \
@@ -36,7 +36,7 @@ in
 stdenvNoCC.mkDerivation {
   pname = "outsource";
   version = "2.1.0";
-  # Explicitní seznam: lokální nastavení a trezor se nesmějí dostat do store.
+  # Explicit allowlist: local settings and databases must never enter the store.
   src = lib.fileset.toSource {
     root = ./.;
     fileset = lib.fileset.unions [
@@ -94,7 +94,7 @@ stdenvNoCC.mkDerivation {
     runHook postInstall
   '';
   meta = {
-    description = "Průvodce vzdálenými připojeními a zástupci s KeePassXC";
+    description = "Remote connection and launcher wizard with KeePassXC integration";
     mainProgram = "outs";
     homepage = "https://github.com/tomasmark79/outsource";
     license = lib.licenses.mit;

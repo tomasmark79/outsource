@@ -1,4 +1,4 @@
-"""Signály posíláme jen vlastním procesům s falešnými klíči a klienty."""
+"""Send signals only to our own processes with fake keys and clients."""
 
 import json
 import os
@@ -93,7 +93,7 @@ class SignalTests(unittest.TestCase):
             root = Path(directory)
             runtime = root / 'runtime'
             runtime.mkdir(mode=0o700)
-            # Vložený klient je samostatný skutečný proces, nikoli mock Popen.
+            # The embedded client is a separate real process, not a Popen mock.
             script = (FIXTURE + "client.write_text('#!' + sys.executable + '\\n' + "
                       + repr(CLIENT) + ')\n' + FIXTURE_END)
             process = subprocess.Popen(
@@ -108,7 +108,7 @@ class SignalTests(unittest.TestCase):
                 deadline = time.monotonic() + 5
                 while not ready_path.exists() and process.poll() is None and time.monotonic() < deadline:
                     time.sleep(0.01)
-                self.assertTrue(ready_path.exists(), 'Falešný klient se nespustil.')
+                self.assertTrue(ready_path.exists(), 'The fake client did not start.')
                 ready = json.loads(ready_path.read_text())
                 process.send_signal(signum)
                 result = process.wait(timeout=8)
@@ -123,8 +123,8 @@ class SignalTests(unittest.TestCase):
                     self.assertFalse(list(runtime.rglob('key.pem')))
                     self.assertFalse(list(runtime.rglob('*.ovpn')))
                 log = next((root / 'data' / 'logs' / 'outsource').glob('outs-*.log')).read_text()
-                self.assertIn('zrušeno signálem', log)
-                self.assertIn(f'"signál": {signum}', log)
+                self.assertIn('canceled by signal', log)
+                self.assertIn(f'"signal": {signum}', log)
                 self.assertNotIn('FAKE-SECRET', log)
             finally:
                 if process.poll() is None:

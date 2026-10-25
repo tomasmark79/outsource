@@ -1,4 +1,4 @@
-"""Průvodce ověřujeme v dočasném profilu, bez připojování k serverům."""
+"""Test the wizard in a temporary profile without connecting to servers."""
 import copy
 import json
 import os
@@ -29,7 +29,7 @@ class ConnectionTests(unittest.TestCase):
         self.api.GUI_MODE = True
         self.api.LOCAL_CONFIG = self.root / 'config.local.json'
         self.connection = {
-            'version': 1, 'id': 'a' * 32, 'name': 'Server – práce', 'type': 'ssh',
+            'version': 1, 'id': 'a' * 32, 'name': 'Server – café', 'type': 'ssh',
             'record': {'host': 'pracovni-alias'},
         }
 
@@ -45,11 +45,11 @@ class ConnectionTests(unittest.TestCase):
         self.assertIn('Icon=' + str(self.api.ROOT / 'assets/outs-ssh.svg'), desktop.read_text())
         self.assertIn('"connect" "' + 'a' * 32 + '"', desktop.read_text())
         previous = copy.deepcopy(self.connection)
-        self.connection['name'] = 'Nový název'
+        self.connection['name'] = 'Updated café server'
         connections.save(self.api, self.connection, previous)
         with self.assertRaises(outs.OutsError):
             connections.save(self.api, previous, previous)
-        self.assertIn('Nový název', desktop.read_text())
+        self.assertIn('Updated café server', desktop.read_text())
         connections.remove_connection(self.api, self.connection)
         self.assertFalse(path.exists())
         self.assertFalse(desktop.exists())
@@ -66,7 +66,7 @@ class ConnectionTests(unittest.TestCase):
         self.assertFalse(connections.connection_path(self.api, self.connection['id']).exists())
 
     def test_invalid_values_do_not_write_files(self):
-        for update in [{'id': '../escape'}, {'name': 'název\nExec=bad'},
+        for update in [{'id': '../escape'}, {'name': 'name\nExec=bad'},
                        {'record': {'host': '-oProxyCommand=bad'}},
                        {'record': {'host': 'server', 'port': 0}},
                        {'record': {'host': 'server', 'password': 'secret'}}]:
@@ -150,9 +150,9 @@ class ConnectionTests(unittest.TestCase):
         choose.assert_not_called()
         self.assertEqual(path.read_text(), '{ broken json')
 
-    @unittest.skipUnless(shutil.which('gio'), 'Gio není dostupné pro kontrolu desktopového parseru.')
+    @unittest.skipUnless(shutil.which('gio'), 'Gio is unavailable for desktop parser verification.')
     def test_ssh_desktop_arguments_round_trip_through_gio(self):
-        # Spouštíme jen vlastní fixture zapisující argv, nikoli terminál či SSH.
+        # Run only our own fixture recording argv, not a terminal or SSH.
         program_dir = self.root / 'bin "quoted" $value'
         program_dir.mkdir()
         launcher = program_dir / 'outs'
@@ -170,8 +170,8 @@ class ConnectionTests(unittest.TestCase):
         )
         terminal.chmod(0o700)
         env = {**os.environ, 'OUTSOURCE_TEST_CAPTURE': str(capture_path)}
-        names = ['Server "práce"', 'Server $value', 'Server `literal`',
-                 r'Server\práce', r'Server\\práce', 'Server %U', 'Server\ttab']
+        names = ['Server "café"', 'Server $value', 'Server `literal`',
+                 r'Server\café', r'Server\\café', 'Server %U', 'Server\ttab']
         for name in names:
             with self.subTest(name=name):
                 capture_path.unlink(missing_ok=True)
@@ -224,16 +224,16 @@ class ConnectionTests(unittest.TestCase):
         self.assertNotIn('keepass', record)
 
     def test_host_typo_can_be_corrected_without_losing_the_form(self):
-        form = {'name': 'Pracovní server', 'host': 'server/typo', 'username': 'tomas', 'port': '2222'}
+        form = {'name': 'Work server', 'host': 'server/typo', 'username': 'tomas', 'port': '2222'}
         with patch.object(connections, 'choose', side_effect=['ssh', 'config']), \
              patch.object(connections, 'details_form', return_value=form), \
              patch.object(connections, 'entry', return_value='::1') as entry, \
              patch.object(connections, 'dialog', return_value='') as dialog:
             connections.edit_connection(self.api)
-        entry.assert_called_once_with(self.api, 'Alias z ~/.ssh/config nebo server', 'server/typo')
+        entry.assert_called_once_with(self.api, 'Alias from ~/.ssh/config or server', 'server/typo')
         self.assertIn('--error', dialog.call_args_list[0].args)
         saved = json.loads(next(connections.data_dir(self.api).glob('*.json')).read_text())
-        self.assertEqual(saved['name'], 'Pracovní server')
+        self.assertEqual(saved['name'], 'Work server')
         self.assertEqual(saved['record']['host'], '::1')
         self.assertEqual(saved['record']['username'], 'tomas')
         self.assertEqual(saved['record']['port'], 2222)
@@ -313,7 +313,7 @@ class ConnectionTests(unittest.TestCase):
             outs.run_keepass_cli(['keepassxc-cli', 'ls', '-q', 'test.kdbx'], 'master-secret')
         self.assertNotIn('master-secret', run.call_args.args[0])
         self.assertNotIn('env', run.call_args.kwargs)
-        # Vstupní buffer se po skončení příkazu vynuluje.
+        # The input buffer is zeroed after the command exits.
         self.assertEqual(set(run.call_args.kwargs['input']), {0})
 
     def test_keepass_without_key_file(self):
@@ -329,8 +329,8 @@ class ConnectionTests(unittest.TestCase):
                  patch.object(connections.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '', '')) as run:
                 connections.dialog(self.api, kind)
             args = run.call_args.args[0]
-            self.assertEqual('--cancel-label=Zrušit' in args, kind == '--password')
-            self.assertEqual('--ok-label=Potvrdit' in args, kind != '--file-selection')
+            self.assertEqual('--cancel-label=Cancel' in args, kind == '--password')
+            self.assertEqual('--ok-label=Confirm' in args, kind != '--file-selection')
 
     def test_dialog_cancel_and_error(self):
         with patch.object(self.api, 'require_program', return_value='zenity'), \

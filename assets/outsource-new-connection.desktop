@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Přidat vzdálené připojení
+Name=Add Remote Connection
 Exec=outs new
 Icon=outs-ssh
 Terminal=false

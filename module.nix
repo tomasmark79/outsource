@@ -1,4 +1,4 @@
-# Modul přidává pouze aplikaci; síť, libvirt a uživatelský trezor spravuje hostitel.
+# This module only adds the application; the host manages networking, libvirt, and the user's database.
 {
   config,
   lib,
@@ -10,12 +10,12 @@ let
 in
 {
   options.programs.outsource = {
-    enable = lib.mkEnableOption "Outsource a jeho nabídku vzdálených připojení";
+    enable = lib.mkEnableOption "Outsource and its remote connection menu";
     package = lib.mkOption {
       type = lib.types.package;
       default = pkgs.callPackage ./package.nix { };
       defaultText = lib.literalExpression "pkgs.callPackage ./package.nix { }";
-      description = "Balíček Outsource; umožňuje zvolit vlastní variantu klienta nebo KeePassXC.";
+      description = "Outsource package; allows a custom client or KeePassXC variant.";
     };
   };
   config = lib.mkIf cfg.enable { environment.systemPackages = [ cfg.package ]; };

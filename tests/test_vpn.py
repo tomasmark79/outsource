@@ -1,4 +1,4 @@
-"""VPN zkoušíme s paměťovým NetworkManagerem, bez sítě a uživatelských dat."""
+"""Test VPN with an in-memory NetworkManager, without networking or user data."""
 
 import contextlib
 import io
@@ -70,7 +70,7 @@ class VpnTests(unittest.TestCase):
             certificate_root = Path(options["env"]["NM_CERT_PATH"])
             self.assertTrue(certificate_root.is_relative_to(self.runtime))
             self.assertEqual(certificate_root.stat().st_mode & 0o777, 0o700)
-            # Stejně jako plugin vypíšeme vložený klíč odděleně od .ovpn.
+            # Like the plugin, write the embedded key separately from the .ovpn file.
             certs = certificate_root / "nm-openvpn"
             certs.mkdir()
             (certs / "key.pem").write_bytes(b"FAKE-PRIVATE-KEY")
@@ -78,7 +78,7 @@ class VpnTests(unittest.TestCase):
             if self.bad_output:
                 output = b"unknown successful import output"
             else:
-                # UUID uvnitř názvu nesmí přebít skutečné UUID v závorkách.
+                # A UUID within the name must not override the actual UUID in parentheses.
                 output = (f"Connection 'name-11111111-1111-1111-1111-111111111111' ({UUID}) successfully added.\n").encode()
         elif operation == "modify":
             self.assertEqual(command[:6], ["nmcli", "connection", "modify", "--temporary", "uuid", UUID])
@@ -149,7 +149,7 @@ class VpnTests(unittest.TestCase):
 
     def test_legacy_profile_down_is_not_silently_reported_as_success(self):
         self.profiles[UUID] = "outs-example-office"
-        with self.assertRaisesRegex(outs.OutsError, "bez spravovaného runtime stavu"):
+        with self.assertRaisesRegex(outs.OutsError, "without managed runtime state"):
             self.invoke("vpn-down")
         self.assertIn(UUID, self.profiles)
         self.assertEqual(len(self.calls), 2)
@@ -306,7 +306,7 @@ class VpnTests(unittest.TestCase):
 
     def test_same_profile_is_locked(self):
         module = outs.vpn_runtime_tools()
-        with module.VpnRuntime("example", "office"), self.assertRaisesRegex(outs.OutsError, "jiný příkaz"):
+        with module.VpnRuntime("example", "office"), self.assertRaisesRegex(outs.OutsError, "Another Outsource command"):
             self.invoke()
 
     def test_corrupt_state_does_not_delete_any_profile(self):

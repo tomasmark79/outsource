@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Vzdálená připojení a zástupce s podporou KeePassXC."""
+"""Remote connections and launchers with KeePassXC integration."""
 
 from __future__ import annotations
 
@@ -47,27 +47,27 @@ class OutsError(RuntimeError):
 
 
 def usage() -> str:
-    return """Použití:
-  outs manage                         # správa zástupců v grafickém okně
-  outs new                            # přidat vzdálené připojení
-  outs connect <id> [--gui]            # otevřít uložené připojení
-  outs keepass                        # nastavit databázi KeePassXC
+    return """Usage:
+  outs manage                         # manage launchers in a graphical window
+  outs new                            # add a remote connection
+  outs connect <id> [--gui]            # open a saved connection
+  outs keepass                        # configure the KeePassXC database
   outs ls
-  outs desktop <firma> <typ> <cíl> [--name <název>]
-  outs <firma>
-  outs <firma> show
-  outs <firma> ssh [server]
-  outs <firma> rdp [server] [--manual] [--debug] [-- <FreeRDP parametry>]
-  outs <firma> virt-viewer [stroj]
-  outs <firma> web [služba]
-  outs <firma> vpn
-  outs <firma> vpn-up <profil>
-  outs <firma> vpn-down <profil>
+  outs desktop <company> <type> <target> [--name <name>]
+  outs <company>
+  outs <company> show
+  outs <company> ssh [server]
+  outs <company> rdp [server] [--manual] [--debug] [-- <FreeRDP arguments>]
+  outs <company> virt-viewer [machine]
+  outs <company> web [service]
+  outs <company> vpn
+  outs <company> vpn-up <profile>
+  outs <company> vpn-down <profile>
 
-Příklady:
+Examples:
   outs example
   outs desktop example rdp workstation
-  outs desktop example rdp workstation --name "Pracovní Windows"
+  outs desktop example rdp workstation --name "Work Windows"
   outs example ssh bastion
   outs example rdp workstation
   outs example web portal
@@ -78,30 +78,30 @@ def read_json(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
-        raise OutsError(f"Chybí konfigurační soubor {path}.") from exc
+        raise OutsError(f"Missing configuration file: {path}.") from exc
     except json.JSONDecodeError as exc:
-        raise OutsError(f"Neplatný JSON v {path}: {exc}") from exc
+        raise OutsError(f"Invalid JSON in {path}: {exc}") from exc
     if not isinstance(data, dict):
-        raise OutsError(f"Kořen konfigurace {path} musí být objekt.")
+        raise OutsError(f"The root of configuration {path} must be an object.")
     return data
 
 
 def all_configs() -> list[tuple[Path, dict[str, Any]]]:
     if not CLIENTS_DIR.is_dir():
-        raise OutsError(f"Chybí adresář profilů {CLIENTS_DIR}.")
+        raise OutsError(f"Missing profiles directory: {CLIENTS_DIR}.")
     return [(path, read_json(path)) for path in sorted(CLIENTS_DIR.glob("*/config.json"))]
 
 
 def company_data(config: dict[str, Any]) -> dict[str, Any]:
     company = config.get("company")
     if not isinstance(company, dict) or not isinstance(company.get("id"), str):
-        raise OutsError("Konfiguraci chybí company.id.")
+        raise OutsError("The configuration is missing company.id.")
     return company
 
 
 def resolve_client(requested: str) -> tuple[Path, dict[str, Any]]:
     if not CLIENT_RE.fullmatch(requested):
-        raise OutsError(f"Neplatný název firmy '{requested}'.")
+        raise OutsError(f"Invalid company name '{requested}'.")
 
     matches: list[tuple[Path, dict[str, Any]]] = []
     for path, config in all_configs():
@@ -111,16 +111,16 @@ def resolve_client(requested: str) -> tuple[Path, dict[str, Any]]:
             matches.append((path.parent, config))
 
     if not matches:
-        raise OutsError(f"Firma ani alias '{requested}' neexistuje. Použijte 'outs ls'.")
+        raise OutsError(f"Company or alias '{requested}' does not exist. Use 'outs ls'.")
     if len(matches) > 1:
-        raise OutsError(f"Alias firmy '{requested}' není jednoznačný.")
+        raise OutsError(f"Company alias '{requested}' is ambiguous.")
     return matches[0]
 
 
 def require_program(program: str) -> str:
     executable = shutil.which(program)
     if executable is None:
-        raise OutsError(f"Chybí program '{program}'. Nainstalujte balíček outsource z konfigurace NixOS.")
+        raise OutsError(f"Missing program '{program}'. Install the outsource package through your NixOS configuration.")
     return executable
 
 
@@ -130,19 +130,19 @@ def log_event(event: str, **fields) -> None:
 
 
 def rdp_exit_status(result: int, *, cancelled: bool = False) -> int:
-    # FreeRDP SDL rozlišuje odpojení (1), odhlášení (2), zavření uživatelem
-    # (11) a zrušení připojení (145). Tyto výsledky nejsou chyba spojení.
-    # Starší SDL klient může po zavření vrátit i obecnou chybu 131;
-    # samotná 131 nestačí, potřebujeme potvrzení zrušení z diagnostiky.
+    # FreeRDP SDL distinguishes disconnection (1), logout (2), user closure
+    # (11), and connection cancellation (145). These are not connection errors.
+    # Older SDL clients may return generic error 131 after closing;
+    # 131 alone is insufficient; cancellation must be confirmed by diagnostics.
     if result in {1, 2, 11, 145} or (result == 131 and cancelled):
-        log_event("RDP relace ukončena bez chyby", původní_kód=result)
+        log_event("RDP session ended normally", original_code=result)
         return 0
     return result
 
 
 def wait_for_client(process, *, rdp: bool = False) -> int:
     cancelled = False
-    # Čteme pouze diagnostický proud; obsah vzdáleného terminálu se nezaznamenává.
+    # Read only the diagnostic stream; remote terminal contents are not recorded.
     if process.stderr is not None:
         with process.stderr:
             while chunk := process.stderr.readline(8192):
@@ -154,18 +154,18 @@ def wait_for_client(process, *, rdp: bool = False) -> int:
                     sys.stderr.write(chunk.decode("utf-8", errors="replace"))
                     sys.stderr.flush()
     result = process.wait()
-    log_event("klient skončil", návratový_kód=result)
+    log_event("client exited", exit_code=result)
     return rdp_exit_status(result, cancelled=cancelled) if rdp else result
 
 
 def run(command: list[str]) -> int:
     try:
-        log_event("spuštění klienta")
+        log_event("starting client")
         result = subprocess.run(command, check=False).returncode
-        log_event("klient skončil", návratový_kód=result)
+        log_event("client exited", exit_code=result)
         return result
     except OSError as exc:
-        raise OutsError(f"Program '{command[0]}' nelze spustit: {exc}") from exc
+        raise OutsError(f"Cannot start program '{command[0]}': {exc}") from exc
 
 
 def detached_process_options() -> dict[str, Any]:
@@ -234,8 +234,8 @@ def warn_if_vpn_active(return_code: int) -> int:
     color = "\033[1;31m" if sys.stderr.isatty() and "NO_COLOR" not in os.environ else ""
     reset = "\033[0m" if color else ""
     print(
-        f"{color}POZOR: Je aktivní VPN ({', '.join(active)}). "
-        f"Může blokovat přístup k lokální VM; vypněte ji a zkuste RDP znovu.{reset}",
+        f"{color}WARNING: A VPN is active ({', '.join(active)}). "
+        f"It may block access to a local VM; disconnect it and try RDP again.{reset}",
         file=sys.stderr,
         flush=True,
     )
@@ -244,32 +244,32 @@ def warn_if_vpn_active(return_code: int) -> int:
 
 def report_detached_rdp(process: subprocess.Popen[bytes]) -> int:
     """Return immediately after handing the RDP session to the GUI process."""
-    log_event("klient předán na pozadí", pid=process.pid)
+    log_event("client handed off to background", pid=process.pid)
     return_code = process.poll()
     if return_code is None:
-        print(f"RDP běží na pozadí (PID {process.pid}).", flush=True)
+        print(f"RDP is running in the background (PID {process.pid}).", flush=True)
         return 0
-    log_event("klient skončil", návratový_kód=return_code)
+    log_event("client exited", exit_code=return_code)
     if rdp_exit_status(return_code) == 0:
         return 0
     warn_if_vpn_active(return_code)
-    raise OutsError(f"FreeRDP skončil s kódem {return_code}; spusťte jej s --debug.")
+    raise OutsError(f"FreeRDP exited with code {return_code}; run it with --debug.")
 
 
 def run_detached(command: list[str]) -> int:
-    """Spustit samostatné okno RDP bez pomocného terminálu."""
+    """Start a standalone RDP window without an extra terminal."""
     return run_rdp(command, detached=True)
 
 
 def normalized_uuid(value: str) -> str:
     if not isinstance(value, str):
-        raise OutsError("KeePass UUID musí být text.")
+        raise OutsError("KeePass UUID must be a string.")
     normalized = value.strip().lower()
     if normalized.startswith("{") and normalized.endswith("}"):
         normalized = normalized[1:-1]
     normalized = normalized.replace("-", "")
     if not UUID_RE.fullmatch(normalized):
-        raise OutsError(f"Neplatné KeePass UUID '{value}'.")
+        raise OutsError(f"Invalid KeePass UUID '{value}'.")
     return normalized
 
 
@@ -277,21 +277,21 @@ def keepass_paths() -> tuple[Path, Path | None]:
     local = read_json(LOCAL_CONFIG)
     keepass = local.get("keepass")
     if not isinstance(keepass, dict):
-        raise OutsError(f"V {LOCAL_CONFIG} chybí objekt keepass.")
+        raise OutsError(f"Missing keepass object in {LOCAL_CONFIG}.")
 
     database_value = keepass.get("database")
     key_file_value = keepass.get("key_file")
     if not isinstance(database_value, str) or not database_value:
-        raise OutsError(f"V {LOCAL_CONFIG} chybí keepass.database.")
+        raise OutsError(f"Missing keepass.database in {LOCAL_CONFIG}.")
     if key_file_value is not None and not isinstance(key_file_value, str):
-        raise OutsError("Cesta k souborovému klíči musí být text.")
+        raise OutsError("The key file path must be a string.")
 
     database = Path(database_value).expanduser()
     key_file = Path(key_file_value).expanduser() if key_file_value else None
     if not database.is_file():
-        raise OutsError(f"KeePass databáze neexistuje: {database}")
+        raise OutsError(f"KeePass database does not exist: {database}")
     if key_file is not None and not key_file.is_file():
-        raise OutsError(f"KeePass souborový klíč neexistuje: {key_file}")
+        raise OutsError(f"KeePass key file does not exist: {key_file}")
     return database, key_file
 
 
@@ -300,17 +300,17 @@ def run_keepass_cli(arguments: list[str], master_password: str) -> subprocess.Co
     password_input = bytearray(master_password.encode("utf-8"))
     password_input.append(10)
     try:
-        log_event("čtení KeePassXC")
+        log_event("reading KeePassXC")
         result = subprocess.run(
             arguments,
             check=False,
             input=password_input,
             stdout=subprocess.PIPE,
         )
-        log_event("KeePassXC dokončeno", návratový_kód=result.returncode)
+        log_event("KeePassXC finished", exit_code=result.returncode)
         return result
     except OSError as exc:
-        raise OutsError(f"KeePassXC CLI nelze spustit: {exc}") from exc
+        raise OutsError(f"Cannot start KeePassXC CLI: {exc}") from exc
     finally:
         for index in range(len(password_input)):
             password_input[index] = 0
@@ -324,7 +324,7 @@ def find_keepass_entry_path(
 ) -> tuple[str, str]:
     """Resolve an entry path by UUID using KeePassXC's search command."""
     if not isinstance(uuid_value, str):
-        raise OutsError("Přístupu chybí keepass.uuid.")
+        raise OutsError("The credential is missing keepass.uuid.")
     expected_uuid = normalized_uuid(uuid_value)
     result = run_keepass_cli(
         [
@@ -339,21 +339,21 @@ def find_keepass_entry_path(
     )
     if result.returncode != 0:
         raise OutsError(
-            f"KeePassXC neodemkl databázi nebo nenašel UUID {expected_uuid}."
+            f"KeePassXC could not unlock the database or find UUID {expected_uuid}."
         )
     try:
         paths = result.stdout.decode("utf-8", errors="strict").splitlines()
     except UnicodeDecodeError as exc:
-        raise OutsError("KeePassXC vrátil neplatnou cestu položky.") from exc
+        raise OutsError("KeePassXC returned an invalid entry path.") from exc
     if len(paths) != 1 or not paths[0]:
-        raise OutsError(f"KeePass UUID {expected_uuid} nemá právě jednu položku.")
+        raise OutsError(f"KeePass UUID {expected_uuid} does not match exactly one entry.")
     return paths[0], expected_uuid
 
 
 def lookup_keepass_password(credential: dict[str, Any]) -> bytearray:
     """Find an entry by UUID and return its password through KeePassXC CLI."""
     database, key_file = keepass_paths()
-    master_password = ask_password(f"Odemknout trezor {database.name}")
+    master_password = ask_password(f"Unlock database {database.name}")
     try:
         entry_path, expected_uuid = find_keepass_entry_path(
             credential.get("uuid"), database, key_file, master_password
@@ -377,23 +377,23 @@ def lookup_keepass_password(credential: dict[str, Any]) -> bytearray:
     finally:
         master_password = ""
     if result.returncode != 0:
-        raise OutsError(f"KeePassXC nenačetl položku s UUID {expected_uuid}.")
+        raise OutsError(f"KeePassXC could not read the entry with UUID {expected_uuid}.")
     lines = result.stdout.splitlines()
     if len(lines) != 2:
-        raise OutsError("KeePassXC vrátil neočekávaná data; heslo nebylo použito.")
+        raise OutsError("KeePassXC returned unexpected data; the password was not used.")
     password = bytearray(lines[0])
     try:
         actual_uuid = normalized_uuid(lines[1].decode("ascii", errors="strict"))
     except (UnicodeDecodeError, OutsError) as exc:
         for index in range(len(password)):
             password[index] = 0
-        raise OutsError("KeePassXC vrátil neplatné UUID; heslo nebylo použito.") from exc
+        raise OutsError("KeePassXC returned an invalid UUID; the password was not used.") from exc
     if actual_uuid != expected_uuid:
         for index in range(len(password)):
             password[index] = 0
-        raise OutsError("KeePassXC vrátil jinou položku; heslo nebylo použito.")
+        raise OutsError("KeePassXC returned a different entry; the password was not used.")
     if not password:
-        raise OutsError(f"KeePass položka s UUID {expected_uuid} má prázdné heslo.")
+        raise OutsError(f"KeePass entry with UUID {expected_uuid} has an empty password.")
     return password
 
 
@@ -401,9 +401,9 @@ def lookup_keepass_attachment(credential: dict[str, Any]) -> bytearray:
     """Find an entry by UUID and export one attachment through KeePassXC CLI."""
     attachment = credential.get("attachment")
     if not isinstance(attachment, str) or not attachment:
-        raise OutsError("SSH přístupu chybí keepass.attachment.")
+        raise OutsError("The SSH credential is missing keepass.attachment.")
     database, key_file = keepass_paths()
-    master_password = ask_password(f"Odemknout trezor {database.name}")
+    master_password = ask_password(f"Unlock database {database.name}")
     try:
         entry_path, expected_uuid = find_keepass_entry_path(
             credential.get("uuid"), database, key_file, master_password
@@ -417,9 +417,9 @@ def lookup_keepass_attachment(credential: dict[str, Any]) -> bytearray:
         try:
             actual_uuid = normalized_uuid(identity.stdout.decode("ascii", errors="strict"))
         except (UnicodeDecodeError, OutsError) as exc:
-            raise OutsError("KeePassXC neověřil UUID SSH položky; klíč nebyl použit.") from exc
+            raise OutsError("KeePassXC could not verify the SSH entry UUID; the key was not used.") from exc
         if identity.returncode != 0 or actual_uuid != expected_uuid:
-            raise OutsError("KeePassXC vrátil jinou SSH položku; klíč nebyl použit.")
+            raise OutsError("KeePassXC returned a different SSH entry; the key was not used.")
         result = run_keepass_cli(
             [
                 require_program("keepassxc-cli"),
@@ -437,11 +437,11 @@ def lookup_keepass_attachment(credential: dict[str, Any]) -> bytearray:
         master_password = ""
     if result.returncode != 0:
         raise OutsError(
-            f"KeePass položka s UUID {expected_uuid} nemá přílohu '{attachment}'."
+            f"KeePass entry with UUID {expected_uuid} has no attachment '{attachment}'."
         )
     data = bytearray(result.stdout)
     if not data:
-        raise OutsError(f"KeePass příloha '{attachment}' je prázdná.")
+        raise OutsError(f"KeePass attachment '{attachment}' is empty.")
     return data
 
 
@@ -449,9 +449,9 @@ def lookup_keepass_vpn(credential: dict[str, Any]) -> tuple[bytearray, str, byte
     """Return an OpenVPN attachment, username and password after one unlock."""
     attachment = credential.get("attachment")
     if not isinstance(attachment, str) or not attachment:
-        raise OutsError("VPN přístupu chybí keepass.attachment.")
+        raise OutsError("The VPN credential is missing keepass.attachment.")
     database, key_file = keepass_paths()
-    master_password = ask_password(f"Odemknout trezor {database.name}")
+    master_password = ask_password(f"Unlock database {database.name}")
     try:
         entry_path, expected_uuid = find_keepass_entry_path(
             credential.get("uuid"), database, key_file, master_password
@@ -491,45 +491,45 @@ def lookup_keepass_vpn(credential: dict[str, Any]) -> tuple[bytearray, str, byte
         master_password = ""
 
     if password_result.returncode != 0 or profile_result.returncode != 0:
-        raise OutsError(f"KeePassXC nenačetl VPN data s UUID {expected_uuid}.")
+        raise OutsError(f"KeePassXC could not read VPN data with UUID {expected_uuid}.")
     lines = password_result.stdout.splitlines()
     if len(lines) != 3:
-        raise OutsError("KeePassXC vrátil neočekávaná VPN data.")
+        raise OutsError("KeePassXC returned unexpected VPN data.")
     try:
         username = lines[0].decode("utf-8", errors="strict")
     except UnicodeDecodeError as exc:
-        raise OutsError("KeePassXC vrátil neplatné uživatelské jméno VPN.") from exc
+        raise OutsError("KeePassXC returned an invalid VPN username.") from exc
     if not username or "\n" in username or "\r" in username:
-        raise OutsError("KeePass položka má neplatné nebo prázdné uživatelské jméno VPN.")
+        raise OutsError("The KeePass entry has an invalid or empty VPN username.")
     password = bytearray(lines[1])
     try:
         actual_uuid = normalized_uuid(lines[2].decode("ascii", errors="strict"))
     except (UnicodeDecodeError, OutsError) as exc:
         for index in range(len(password)):
             password[index] = 0
-        raise OutsError("KeePassXC vrátil neplatné UUID VPN položky.") from exc
+        raise OutsError("KeePassXC returned an invalid VPN entry UUID.") from exc
     if actual_uuid != expected_uuid:
         for index in range(len(password)):
             password[index] = 0
-        raise OutsError("KeePassXC vrátil jinou VPN položku.")
+        raise OutsError("KeePassXC returned a different VPN entry.")
     if not password:
-        raise OutsError(f"KeePass položka s UUID {expected_uuid} má prázdné heslo.")
+        raise OutsError(f"KeePass entry with UUID {expected_uuid} has an empty password.")
     if 10 in password or 13 in password:
         for index in range(len(password)):
             password[index] = 0
-        raise OutsError("VPN heslo nesmí obsahovat konec řádku.")
+        raise OutsError("The VPN password must not contain a newline.")
     profile = bytearray(profile_result.stdout)
     if not profile:
         for index in range(len(password)):
             password[index] = 0
-        raise OutsError(f"KeePass příloha '{attachment}' je prázdná.")
+        raise OutsError(f"KeePass attachment '{attachment}' is empty.")
     return profile, username, password
 
 
 def lookup_keepass_web(credential: dict[str, Any]) -> tuple[str, str]:
     """Find an entry by UUID and return its URL and username."""
     database, key_file = keepass_paths()
-    master_password = ask_password(f"Odemknout trezor {database.name}")
+    master_password = ask_password(f"Unlock database {database.name}")
     try:
         entry_path, expected_uuid = find_keepass_entry_path(
             credential.get("uuid"), database, key_file, master_password
@@ -555,42 +555,42 @@ def lookup_keepass_web(credential: dict[str, Any]) -> tuple[str, str]:
     finally:
         master_password = ""
     if result.returncode != 0:
-        raise OutsError(f"KeePassXC nenačetl webovou položku s UUID {expected_uuid}.")
+        raise OutsError(f"KeePassXC could not read the web entry with UUID {expected_uuid}.")
     lines = result.stdout.splitlines()
     if len(lines) != 3:
-        raise OutsError("KeePassXC vrátil neočekávaná webová data.")
+        raise OutsError("KeePassXC returned unexpected web data.")
     try:
         url = lines[0].decode("utf-8", errors="strict")
         username = lines[1].decode("utf-8", errors="strict")
         actual_uuid = normalized_uuid(lines[2].decode("ascii", errors="strict"))
     except (UnicodeDecodeError, OutsError) as exc:
-        raise OutsError("KeePassXC vrátil neplatná webová data.") from exc
+        raise OutsError("KeePassXC returned invalid web data.") from exc
     if actual_uuid != expected_uuid:
-        raise OutsError("KeePassXC vrátil jinou webovou položku.")
+        raise OutsError("KeePassXC returned a different web entry.")
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise OutsError(f"KeePass položka má neplatnou webovou URL '{url}'.")
+        raise OutsError(f"The KeePass entry has an invalid web URL '{url}'.")
     if parsed.username is not None or parsed.password is not None:
-        raise OutsError("Webová URL nesmí obsahovat uživatelské jméno ani heslo.")
+        raise OutsError("The web URL must not contain a username or password.")
     return url, username
 
 
 def run_rdp(
     command: list[str], *, detached: bool, password: bytearray | None = None
 ) -> int:
-    """Společné spuštění RDP s ručním heslem nebo chráněným vstupem z KeePassXC."""
+    """Shared RDP startup with manual authentication or protected input from KeePassXC."""
     process: subprocess.Popen[bytes] | None = None
     payload = bytearray()
     handed_off = False
     try:
         for argument in command:
             if any(character in argument for character in "\0\r\n"):
-                raise OutsError("RDP parametr nesmí obsahovat NUL ani konec řádku.")
+                raise OutsError("RDP arguments must not contain NUL or newline characters.")
         if password is not None:
-            # /args-from:stdin je řádkový protokol. Heslo nesmí ukončit svůj
-            # řádek a přidat další přepínač ani se zkrátit na vloženém NUL.
+            # /args-from:stdin is a line-based protocol. Passwords must not terminate their
+            # line to inject another flag or be truncated at an embedded NUL.
             if any(character in password for character in (0, 10, 13)):
-                raise OutsError("RDP heslo nesmí obsahovat NUL ani konec řádku.")
+                raise OutsError("The RDP password must not contain NUL or newline characters.")
             for argument in command[1:]:
                 payload.extend(argument.encode("utf-8"))
                 payload.append(10)
@@ -609,7 +609,7 @@ def run_rdp(
             process_options["stderr"] = subprocess.PIPE
             if GUI_MODE:
                 process_options["stdout"] = subprocess.DEVNULL
-        log_event("spuštění klienta RDP")
+        log_event("starting RDP client")
         process = subprocess.Popen(
             [command[0], "/args-from:stdin"] if password is not None else command,
             stdin=subprocess.PIPE if password is not None else (subprocess.DEVNULL if detached else None),
@@ -617,7 +617,7 @@ def run_rdp(
         )
         if password is not None:
             if process.stdin is None:
-                raise OutsError(f"Program '{command[0]}' nepřijal standardní vstup.")
+                raise OutsError(f"Program '{command[0]}' did not accept standard input.")
             process.stdin.write(payload)
             process.stdin.close()
         handed_off = True
@@ -630,7 +630,7 @@ def run_rdp(
             return report_detached_rdp(process)
         return warn_if_vpn_active(wait_for_client(process, rdp=True))
     except OSError as exc:
-        raise OutsError(f"Program '{command[0]}' nelze spustit: {exc}") from exc
+        raise OutsError(f"Cannot start program '{command[0]}': {exc}") from exc
     finally:
         if password is not None:
             for index in range(len(password)):
@@ -638,8 +638,8 @@ def run_rdp(
         for index in range(len(payload)):
             payload[index] = 0
         if process is not None and process.poll() is None and (not handed_off or not detached):
-            # Čekající klient patří této relaci; přerušení launcheru jej nesmí
-            # zanechat běžet. Již předané samostatné okno naopak zachováme.
+            # A client being waited on belongs to this session; interrupting the launcher must not
+            # leave it running. Preserve standalone windows that have already been handed off.
             process.terminate()
             try:
                 process.wait(timeout=5)
@@ -664,19 +664,19 @@ def print_companies() -> None:
 
 def print_company(config: dict[str, Any]) -> None:
     company = company_data(config)
-    print(f"Firma: {company.get('name', company['id'])} [{company['id']}]")
+    print(f"Company: {company.get('name', company['id'])} [{company['id']}]")
 
     print("\nSSH:")
     ssh = config.get("ssh", [])
     if not ssh:
-        print("  (zatím žádné)")
+        print("  (none yet)")
     for item in ssh:
         print(f"  {item['id']} -> {item['username']}@{item['host']}:{item.get('port', 22)}")
 
     print("\nRDP:")
     rdp = config.get("rdp", [])
     if not rdp:
-        print("  (zatím žádné)")
+        print("  (none yet)")
     for item in rdp:
         domain = f"{item.get('domain')}\\" if item.get("domain") else ""
         print(f"  {item['id']} -> {domain}{item['username']}@{item['host']}:{item.get('port', 3389)}")
@@ -684,23 +684,23 @@ def print_company(config: dict[str, Any]) -> None:
     print("\nVirt-viewer:")
     viewers = config.get("virt-viewer", [])
     if not viewers:
-        print("  (zatím žádné)")
+        print("  (none yet)")
     for item in viewers:
         print(f"  {item['id']} -> {item['domain']} ({item.get('connect', 'qemu:///system')})")
 
     print("\nWeb:")
     web = config.get("web", [])
     if not web:
-        print("  (zatím žádný)")
+        print("  (none yet)")
     for item in web:
         print(f"  {item['id']} -> KeePass UUID {item['keepass']['uuid']}")
 
     print("\nVPN:")
     vpn = config.get("vpn", [])
     if not vpn:
-        print("  (zatím žádné)")
+        print("  (none yet)")
     for item in vpn:
-        print(f"  {item['id']} [{item['type']}] -> dočasný NetworkManager profil")
+        print(f"  {item['id']} [{item['type']}] -> temporary NetworkManager profile")
 
 
 def menu_items(config: dict[str, Any]) -> list[tuple[str, str, list[str]]]:
@@ -727,12 +727,12 @@ def menu_items(config: dict[str, Any]) -> list[tuple[str, str, list[str]]]:
         items.append((label, "virt-viewer", [record["id"]]))
 
     for record in config.get("web", []):
-        items.append((f"WEB       {record['id']} — otevřít v prohlížeči", "web", [record["id"]]))
+        items.append((f"WEB       {record['id']} — open in browser", "web", [record["id"]]))
 
     for record in config.get("vpn", []):
         vpn_type = record.get("type", "vpn")
-        items.append((f"VPN zap.  {record['id']} [{vpn_type}]", "vpn-up", [record["id"]]))
-        items.append((f"VPN vyp.  {record['id']} [{vpn_type}]", "vpn-down", [record["id"]]))
+        items.append((f"VPN on    {record['id']} [{vpn_type}]", "vpn-up", [record["id"]]))
+        items.append((f"VPN off   {record['id']} [{vpn_type}]", "vpn-down", [record["id"]]))
 
     return items
 
@@ -742,18 +742,18 @@ def interactive_menu(client_id: str, config: dict[str, Any]) -> int:
     company = company_data(config)
     items = menu_items(config)
 
-    print(f"Firma: {company.get('name', client_id)} [{client_id}]")
+    print(f"Company: {company.get('name', client_id)} [{client_id}]")
     if not items:
-        print("  (zatím nejsou nakonfigurované žádné akce)")
+        print("  (no actions configured yet)")
         return 0
 
     for number, (label, _, _) in enumerate(items, start=1):
         print(f"  {number:>2}) {label}")
-    print("   0) Konec")
+    print("   0) Exit")
 
     while True:
         try:
-            choice = input("Vyberte číslo: ").strip()
+            choice = input("Select a number: ").strip()
         except EOFError:
             print()
             return 0
@@ -766,30 +766,30 @@ def interactive_menu(client_id: str, config: dict[str, Any]) -> int:
                 _, action, arguments = items[index]
                 print()
                 return dispatch_action(client_id, config, action, arguments)
-        print(f"Zadejte číslo 0 až {len(items)}.")
+        print(f"Enter a number from 0 to {len(items)}.")
 
 
 def handle_ssh(client_id: str, config: dict[str, Any], arguments: list[str]) -> int:
     if len(arguments) > 1:
-        raise OutsError("SSH očekává nejvýše jeden název serveru.")
+        raise OutsError("SSH accepts at most one server name.")
 
     records = config.get("ssh", [])
     if not arguments:
-        print(f"SSH servery pro {client_id}:")
+        print(f"SSH servers for {client_id}:")
         for item in records:
             print(f"  {item['id']} -> {item['username']}@{item['host']}:{item.get('port', 22)}")
         return 0
 
     target = arguments[0]
     if not TARGET_RE.fullmatch(target):
-        raise OutsError(f"Neplatný SSH alias '{target}'.")
+        raise OutsError(f"Invalid SSH alias '{target}'.")
     record = find_record(config, "ssh", target)
     credential = record.get("keepass")
     if not credential:
-        # Bez vlastních přihlašovacích údajů platí ~/.ssh/config i systémový agent.
+        # Without custom credentials, use ~/.ssh/config and the system SSH agent.
         host = record.get("host", "")
         if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.:%-]*", host):
-            raise OutsError("Zadejte platný SSH alias nebo adresu serveru.")
+            raise OutsError("Enter a valid SSH alias or server address.")
         command = [require_program("ssh")]
         if record.get("username"):
             command.extend(["-l", record["username"]])
@@ -797,9 +797,9 @@ def handle_ssh(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
             command.extend(["-p", str(record["port"])])
         return run([*command, "--", host])
     if not isinstance(credential, dict):
-        raise OutsError("Neplatný odkaz na KeePassXC.")
+        raise OutsError("Invalid KeePassXC reference.")
 
-    print(f"Odemykám KeePass pro {client_id}/{target}…", flush=True)
+    print(f"Unlocking KeePass for {client_id}/{target}…", flush=True)
     private_key = lookup_keepass_attachment(credential)
     key_path: Path | None = None
     try:
@@ -815,7 +815,7 @@ def handle_ssh(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
             command.extend(["-p", str(record["port"])])
         command.extend(["--", record["host"]])
         print(
-            f"Připojuji {client_id}/{target}; klíč načten z přílohy "
+            f"Connecting to {client_id}/{target}; key loaded from attachment "
             f"{credential['attachment']}.",
             flush=True,
         )
@@ -827,7 +827,7 @@ def handle_ssh(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
             try:
                 key_path.unlink(missing_ok=True)
             except OSError as exc:
-                print(f"Varování: dočasný SSH klíč nelze odstranit: {exc}", file=sys.stderr)
+                print(f"Warning: cannot remove the temporary SSH key: {exc}", file=sys.stderr)
 
 
 def select_rdp_client() -> str:
@@ -847,7 +847,7 @@ def select_rdp_client() -> str:
         executable = shutil.which(candidate)
         if executable:
             return executable
-    raise OutsError("FreeRDP klient není dostupný. Nainstalujte balíček outsource z konfigurace NixOS.")
+    raise OutsError("No FreeRDP client is available. Install the outsource package through your NixOS configuration.")
 
 
 def find_record(config: dict[str, Any], section: str, target: str) -> dict[str, Any]:
@@ -855,7 +855,7 @@ def find_record(config: dict[str, Any], section: str, target: str) -> dict[str, 
     for record in records:
         if record.get("id") == target:
             return record
-    raise OutsError(f"{section.upper()} alias '{target}' v konfiguraci neexistuje.")
+    raise OutsError(f"{section.upper()} alias '{target}' does not exist in the configuration.")
 
 
 def display_command(command: list[str]) -> str:
@@ -865,15 +865,15 @@ def display_command(command: list[str]) -> str:
 
 
 def desktop_exec_argument(value: str) -> str:
-    """Uvozování argumentu Exec včetně escapování hodnoty desktopového klíče."""
+    """Quote an Exec argument, including desktop entry value escaping."""
     value = value.replace("%", "%%")
     escaped = "".join(f"\\{character}" if character in '\"`$\\' else character for character in value)
-    # Desktopový parser nejprve odstraní escapování hodnoty, pak uvozování Exec.
+    # The desktop parser removes value escaping first, then Exec quoting.
     return desktop_text(f'"{escaped}"')
 
 
 def desktop_text(value: str) -> str:
-    """Escapování textové hodnoty v desktopovém souboru."""
+    """Escape a text value in a desktop file."""
     return (
         value.replace("\\", "\\\\")
         .replace("\n", "\\n")
@@ -883,7 +883,7 @@ def desktop_text(value: str) -> str:
 
 
 def launcher_executable() -> Path:
-    """Stabilní cesta ke stejné instalaci, která právě vytváří zástupce."""
+    """Stable path to the installation that is creating the launcher."""
     packaged = os.environ.get("OUTSOURCE_EXECUTABLE")
     if packaged:
         current = Path(packaged).expanduser()
@@ -929,24 +929,24 @@ def handle_desktop(arguments: list[str]) -> int:
     if "--name" in arguments:
         name_index = arguments.index("--name")
         if name_index != len(arguments) - 2:
-            raise OutsError("Přepínač --name musí být poslední a musí za ním následovat název.")
+            raise OutsError("The --name flag must be last and followed by a name.")
         name = arguments[-1].strip()
         arguments = arguments[:name_index]
         if not name or "\n" in name or "\r" in name:
-            raise OutsError("Název ikony nesmí být prázdný ani obsahovat konec řádku.")
+            raise OutsError("The launcher name must not be empty or contain a newline.")
     else:
         name = ""
 
     if len(arguments) != 3:
         raise OutsError(
-            "Použití: outs desktop <firma> <ssh|rdp|virt-viewer|web|vpn-up|vpn-down> "
-            "<cíl> [--name <název>]"
+            "Usage: outs desktop <company> <ssh|rdp|virt-viewer|web|vpn-up|vpn-down> "
+            "<target> [--name <name>]"
         )
     requested_client, action, target = arguments
     if action not in {"ssh", "rdp", "virt-viewer", "web", "vpn-up", "vpn-down"}:
-        raise OutsError("Ikonu lze vytvořit pro ssh, rdp, virt-viewer, web, vpn-up nebo vpn-down.")
+        raise OutsError("Launchers can be created for ssh, rdp, virt-viewer, web, vpn-up, or vpn-down.")
     if not TARGET_RE.fullmatch(target):
-        raise OutsError(f"Neplatný alias cíle '{target}'.")
+        raise OutsError(f"Invalid target alias '{target}'.")
 
     _, config = resolve_client(requested_client)
     client_id = company_data(config)["id"]
@@ -958,8 +958,8 @@ def handle_desktop(arguments: list[str]) -> int:
         "rdp": "RDP",
         "virt-viewer": "Virt-viewer",
         "web": "Web",
-        "vpn-up": "VPN zapnout",
-        "vpn-down": "VPN vypnout",
+        "vpn-up": "Connect VPN",
+        "vpn-down": "Disconnect VPN",
     }[action]
     launcher_name = name or f"{client_id} — {action_label} — {target}"
     icon = {
@@ -979,7 +979,7 @@ def handle_desktop(arguments: list[str]) -> int:
         "[Desktop Entry]\n"
         "Type=Application\n"
         f"Name={desktop_text(launcher_name)}\n"
-        f"Comment={desktop_text(f'Spustit outs {client_id} {action} {target}')}\n"
+        f"Comment={desktop_text(f'Run outs {client_id} {action} {target}')}\n"
         f"Exec={exec_value}\n"
         f"Icon={desktop_text(icon)}\n"
         # KeePass-backed actions need a TTY for the database password prompt.
@@ -999,9 +999,9 @@ def handle_desktop(arguments: list[str]) -> int:
         temporary_path.replace(desktop_path)
     except OSError as exc:
         temporary_path.unlink(missing_ok=True)
-        raise OutsError(f"Ikonu nelze vytvořit v {user_applications_dir}: {exc}") from exc
+        raise OutsError(f"Cannot create a launcher in {user_applications_dir}: {exc}") from exc
 
-    print(f"Ikona '{launcher_name}' byla vytvořena: {desktop_path}")
+    print(f"Launcher '{launcher_name}' created: {desktop_path}")
     return 0
 
 
@@ -1013,7 +1013,7 @@ def rdp_option_key(argument: str) -> str:
 def merge_rdp_options(command: list[str], options: Any) -> list[str]:
     """Replace earlier options, retaining repeated options within the new layer."""
     if not isinstance(options, list):
-        raise OutsError("freerdp_args musí být seznam řetězců.")
+        raise OutsError("freerdp_args must be a list of strings.")
     for option in options:
         if (
             not isinstance(option, str)
@@ -1021,9 +1021,9 @@ def merge_rdp_options(command: list[str], options: Any) -> list[str]:
             or option[0] not in "/+-"
             or any(char in option for char in "\r\n\0")
         ):
-            raise OutsError("FreeRDP parametry musí být jednotlivé přepínače bez konců řádků.")
+            raise OutsError("FreeRDP arguments must be individual flags without newlines.")
         if rdp_option_key(option) in {"p", "password", "args-from"}:
-            raise OutsError("Heslo zadávejte přes KeePass nebo --manual; /args-from spravuje outs.")
+            raise OutsError("Supply the password through KeePass or --manual; outs manages /args-from.")
     keys = {rdp_option_key(option) for option in options}
     if any(option.lower() in {"/audio-mode:1", "/audio-mode:2", "/audio-mode:server", "/audio-mode:none"}
            for option in options):
@@ -1034,7 +1034,7 @@ def merge_rdp_options(command: list[str], options: Any) -> list[str]:
 def handle_rdp(client_id: str, config: dict[str, Any], arguments: list[str]) -> int:
     if not arguments:
         records = config.get("rdp", [])
-        print(f"RDP servery pro {client_id}:")
+        print(f"RDP servers for {client_id}:")
         for item in records:
             domain = f"{item.get('domain')}\\" if item.get("domain") else ""
             print(f"  {item['id']} -> {domain}{item['username']}@{item['host']}:{item.get('port', 3389)}")
@@ -1049,13 +1049,13 @@ def handle_rdp(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
     allowed_flags = {"--manual", "--debug"}
     invalid_flags = [flag for flag in flags if flag not in allowed_flags]
     if invalid_flags or len(flags) != len(set(flags)):
-        raise OutsError("RDP očekává server, --manual, --debug a FreeRDP parametry za --.")
+        raise OutsError("RDP expects a server, --manual, --debug, and FreeRDP arguments after --.")
 
     records = config.get("rdp", [])
     manual = "--manual" in flags
     debug = "--debug" in flags
     if not TARGET_RE.fullmatch(target):
-        raise OutsError(f"Neplatný RDP alias '{target}'.")
+        raise OutsError(f"Invalid RDP alias '{target}'.")
     record = find_record(config, "rdp", target)
 
     host = record["host"]
@@ -1064,7 +1064,7 @@ def handle_rdp(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
     except ValueError:
         pass
     else:
-        # FreeRDP potřebuje oddělit IPv6 adresu od následujícího portu.
+        # FreeRDP requires separating an IPv6 address from the port that follows.
         host = f"[{host}]"
     window_class = rdp_window_class(client_id, target)
     command = [
@@ -1083,8 +1083,8 @@ def handle_rdp(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
             r"0x[0-9a-fA-F]{1,8}", keyboard_layout
         ):
             raise OutsError(
-                f"Neplatné RDP rozložení klávesnice '{keyboard_layout}'; "
-                "použijte hexadecimální Windows ID nebo 'auto'."
+                f"Invalid RDP keyboard layout '{keyboard_layout}'; "
+                "use a hexadecimal Windows ID or 'auto'."
             )
         keyboard_language = int(keyboard_layout, 16) & 0xFFFF
         command.append(
@@ -1099,11 +1099,11 @@ def handle_rdp(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
     if authentication == "ntlm":
         command.append("/auth-pkg-list:!kerberos,!u2u")
     elif authentication != "auto":
-        raise OutsError(f"Neplatný způsob RDP autentizace '{authentication}'.")
+        raise OutsError(f"Invalid RDP authentication method '{authentication}'.")
 
     certificate = record.get("certificate", "tofu")
     if certificate not in {"tofu", "deny"} and not certificate.startswith("fingerprint:"):
-        raise OutsError(f"Neplatná politika certifikátu '{certificate}'.")
+        raise OutsError(f"Invalid certificate policy '{certificate}'.")
     command.append(f"/cert:{certificate}")
     command.append("+clipboard" if record.get("clipboard", False) else "-clipboard")
     if record.get("multimon", False):
@@ -1113,13 +1113,13 @@ def handle_rdp(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
     if audio is not None:
         audio_modes = {"local": "0", "remote": "1", "off": "2"}
         if not isinstance(audio, str) or audio not in audio_modes:
-            raise OutsError("RDP audio musí být 'local', 'remote' nebo 'off'.")
+            raise OutsError("RDP audio must be 'local', 'remote', or 'off'.")
         command.append(f"/audio-mode:{audio_modes[audio]}")
         if audio == "local":
             command.append("/sound")
     microphone = record.get("microphone", False)
     if not isinstance(microphone, bool):
-        raise OutsError("RDP microphone musí být true nebo false.")
+        raise OutsError("RDP microphone must be true or false.")
     if microphone:
         command.append("/microphone")
 
@@ -1127,34 +1127,34 @@ def handle_rdp(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
     command = merge_rdp_options(command, extra_args)
 
     if company_data(config).get("demo", False):
-        print(f"Ukázková firma: spojení {client_id}/{target} se nespustí.")
+        print(f"Example company: connection {client_id}/{target} will not be started.")
         print(display_command(command))
         return 0
 
     if manual:
         print(
-            f"Připojuji {client_id}/{target} pomocí {Path(command[0]).name}; "
-            "heslo zadejte ručně.",
+            f"Connecting to {client_id}/{target} using {Path(command[0]).name}; "
+            "enter the password manually.",
             flush=True,
         )
         if debug:
-            print("Diagnostický režim: výstup FreeRDP je živě v tomto terminálu.", flush=True)
+            print("Debug mode: FreeRDP output is shown live in this terminal.", flush=True)
             return run_rdp(command, detached=False)
         return run_detached(command)
 
     credential = record.get("keepass")
     if not isinstance(credential, dict):
-        raise OutsError(f"RDP přístupu {client_id}/{target} chybí objekt keepass.")
-    print(f"Odemykám KeePass pro {client_id}/{target}…", flush=True)
+        raise OutsError(f"RDP connection {client_id}/{target} is missing the keepass object.")
+    print(f"Unlocking KeePass for {client_id}/{target}…", flush=True)
     password = lookup_keepass_password(credential)
 
     print(
-        f"Připojuji {client_id}/{target} pomocí {Path(command[0]).name}; "
-        "heslo bezpečně načteno z KDBX.",
+        f"Connecting to {client_id}/{target} using {Path(command[0]).name}; "
+        "password securely loaded from KDBX.",
         flush=True,
     )
     if debug:
-        print("Diagnostický režim: výstup FreeRDP je živě v tomto terminálu.", flush=True)
+        print("Debug mode: FreeRDP output is shown live in this terminal.", flush=True)
     return run_rdp_with_password(
         command,
         password,
@@ -1164,22 +1164,22 @@ def handle_rdp(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
 
 def handle_virt_viewer(client_id: str, config: dict[str, Any], arguments: list[str]) -> int:
     if len(arguments) > 1:
-        raise OutsError("Použití: outs <firma> virt-viewer [stroj]")
+        raise OutsError("Usage: outs <company> virt-viewer [machine]")
     if not arguments:
-        print(f"Virt-viewer stroje pro {client_id}:")
+        print(f"Virt-viewer machines for {client_id}:")
         for item in config.get("virt-viewer", []):
             print(f"  {item['id']} -> {item['domain']} ({item.get('connect', 'qemu:///system')})")
         return 0
 
     target = arguments[0]
     if not TARGET_RE.fullmatch(target):
-        raise OutsError(f"Neplatný virt-viewer alias '{target}'.")
+        raise OutsError(f"Invalid virt-viewer alias '{target}'.")
     record = find_record(config, "virt-viewer", target)
     domain = record.get("domain")
     connect = record.get("connect", "qemu:///system")
     for key, value in (("domain", domain), ("connect", connect)):
         if not isinstance(value, str) or not value.strip() or any(c in value for c in "\0\n\r"):
-            raise OutsError(f"Virt-viewer vyžaduje neprázdný text v poli {key}.")
+            raise OutsError(f"Virt-viewer requires a non-empty string in field {key}.")
 
     viewer = shutil.which("virt-viewer")
     launcher_id = desktop_id(client_id, "virt-viewer", target)
@@ -1190,7 +1190,7 @@ def handle_virt_viewer(client_id: str, config: dict[str, Any], arguments: list[s
         command = [require_program("nix-shell"), "-p", "virt-viewer", "--run", shlex.join(command)]
     env = os.environ.copy()
     env["GDK_BACKEND"] = "wayland"
-    log_event("spuštění klienta virt-viewer")
+    log_event("starting virt-viewer client")
     try:
         process = subprocess.Popen(
             command,
@@ -1201,40 +1201,40 @@ def handle_virt_viewer(client_id: str, config: dict[str, Any], arguments: list[s
             **detached_process_options(),
         )
     except OSError as exc:
-        raise OutsError(f"Virt-viewer nelze spustit: {exc}") from exc
+        raise OutsError(f"Cannot start virt-viewer: {exc}") from exc
     if GUI_MODE:
         return wait_for_client(process)
-    log_event("klient předán na pozadí", pid=process.pid)
-    print(f"Virt-viewer běží na pozadí (PID {process.pid}).", flush=True)
+    log_event("client handed off to background", pid=process.pid)
+    print(f"Virt-viewer is running in the background (PID {process.pid}).", flush=True)
     return 0
 
 
 def handle_web(client_id: str, config: dict[str, Any], arguments: list[str]) -> int:
     if len(arguments) > 1:
-        raise OutsError("Web očekává nejvýše jeden název služby.")
+        raise OutsError("Web accepts at most one service name.")
     records = config.get("web", [])
     if not arguments:
-        print(f"Webové služby pro {client_id}:")
+        print(f"Web services for {client_id}:")
         for item in records:
             print(f"  {item['id']}")
         return 0
 
     target = arguments[0]
     if not TARGET_RE.fullmatch(target):
-        raise OutsError(f"Neplatný webový alias '{target}'.")
+        raise OutsError(f"Invalid web alias '{target}'.")
     record = find_record(config, "web", target)
     credential = record.get("keepass")
     if not isinstance(credential, dict):
-        raise OutsError(f"Webové službě {client_id}/{target} chybí objekt keepass.")
+        raise OutsError(f"Web service {client_id}/{target} is missing the keepass object.")
 
-    print(f"Odemykám KeePass pro {client_id}/{target}…", flush=True)
+    print(f"Unlocking KeePass for {client_id}/{target}…", flush=True)
     url, username = lookup_keepass_web(credential)
     if not webbrowser.open_new_tab(url):
-        raise OutsError(f"Výchozí prohlížeč nelze otevřít pro URL {url}.")
-    suffix = f"; uživatel {username}" if username else ""
+        raise OutsError(f"Cannot open the default browser for URL {url}.")
+    suffix = f"; user {username}" if username else ""
     print(
-        f"Otevírám {client_id}/{target} ve výchozím prohlížeči{suffix}. "
-        "Přihlášení vyplní KeePassXC-Browser.",
+        f"Opening {client_id}/{target} in the default browser{suffix}. "
+        "KeePassXC-Browser will fill in the credentials.",
         flush=True,
     )
     return 0
@@ -1256,16 +1256,16 @@ def vpn_profile_uuid(nmcli: str, selector: str, value: str) -> str | None:
     if result.returncode == 10:
         return None
     if result.returncode != 0:
-        raise OutsError("Nelze ověřit stav VPN profilu v NetworkManageru.")
+        raise OutsError("Cannot check VPN profile state in NetworkManager.")
     value = result.stdout.decode("ascii", errors="replace").strip()
     if not NM_UUID_RE.fullmatch(value):
-        raise OutsError("NetworkManager nevrátil jednoznačné UUID VPN profilu.")
+        raise OutsError("NetworkManager did not return an unambiguous VPN profile UUID.")
     return value
 
 
 def delete_vpn_profile(nmcli: str, uuid: str) -> bool:
-    # Smazání zároveň deaktivuje spojení; při neúspěchu musí certifikáty zůstat
-    # dostupné a uložené UUID umožní opakovat vpn-down.
+    # Deletion also deactivates the connection; on failure, certificates must remain
+    # available, and the saved UUID allows vpn-down to be retried.
     result = subprocess.run(
         [nmcli, "connection", "delete", "uuid", uuid],
         check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -1277,17 +1277,17 @@ def handle_vpn(client_id: str, config: dict[str, Any], action: str, arguments: l
     records = config.get("vpn", [])
     if action == "vpn":
         if arguments:
-            raise OutsError("Příkaz vpn nepřijímá další argument.")
-        print(f"VPN profily pro {client_id}:")
+            raise OutsError("The vpn command does not accept additional arguments.")
+        print(f"VPN profiles for {client_id}:")
         for item in records:
-            print(f"  {item['id']} [{item['type']}] -> dočasný NetworkManager profil")
+            print(f"  {item['id']} [{item['type']}] -> temporary NetworkManager profile")
         return 0
 
     if len(arguments) != 1:
-        raise OutsError(f"Příkaz {action} očekává právě jeden VPN profil.")
+        raise OutsError(f"The {action} command expects exactly one VPN profile.")
     record = find_record(config, "vpn", arguments[0])
     if record.get("type") != "openvpn":
-        raise OutsError(f"VPN typ '{record.get('type')}' zatím nelze spustit.")
+        raise OutsError(f"VPN type '{record.get('type')}' cannot be started yet.")
 
     nmcli = require_program("nmcli")
     runtime_tools = vpn_runtime_tools()
@@ -1295,33 +1295,33 @@ def handle_vpn(client_id: str, config: dict[str, Any], action: str, arguments: l
         with runtime_tools.VpnRuntime(client_id, record["id"]) as runtime:
             state = runtime.read()
             if state is None:
-                # Runtime stav zaniká i při odhlášení, zatímco NM může běžet dál.
-                # Profil bez stavu nepřebíráme ani nemažeme podle samotného názvu.
+                # Runtime state can disappear on logout while NetworkManager keeps running.
+                # Do not take ownership of or delete a profile without state based on its name alone.
                 for name in (runtime.name, f"outs-{client_id}-{record['id']}"):
                     unmanaged_uuid = vpn_profile_uuid(nmcli, "id", name)
                     if unmanaged_uuid is not None:
                         raise OutsError(
-                            "Existuje VPN profil bez spravovaného runtime stavu. "
-                            "Ověřte jej v NetworkManageru; pro odpojení a odstranění použijte "
-                            f"'nmcli connection down uuid {unmanaged_uuid}' a "
+                            "A VPN profile exists without managed runtime state. "
+                            "Check it in NetworkManager; to disconnect and remove it, use "
+                            f"'nmcli connection down uuid {unmanaged_uuid}' and "
                             f"'nmcli connection delete uuid {unmanaged_uuid}'. "
-                            "Poté opakujte příkaz Outsource."
+                            "Then retry the Outsource command."
                         )
             if action == "vpn-down":
                 if state is None:
-                    print("VPN nemá uložený runtime profil.")
+                    print("VPN has no saved runtime profile.")
                     return 0
                 uuid = state.get("uuid") or vpn_profile_uuid(nmcli, "id", state["import_name"])
                 if uuid is not None and not delete_vpn_profile(nmcli, uuid):
-                    raise OutsError("VPN profil nelze odstranit; jeho runtime stav zůstává pro další vpn-down.")
+                    raise OutsError("Cannot remove the VPN profile; its runtime state is retained for another vpn-down.")
                 runtime.cleanup()
                 return 0
             if state is not None:
-                raise OutsError("VPN má uložený runtime stav; nejprve použijte vpn-down.")
+                raise OutsError("VPN has saved runtime state; run vpn-down first.")
             credential = record.get("keepass")
             if not isinstance(credential, dict):
-                raise OutsError(f"VPN profilu {client_id}/{record['id']} chybí objekt keepass.")
-            print(f"Odemykám KeePass pro {client_id}/{record['id']}…", flush=True)
+                raise OutsError(f"VPN profile {client_id}/{record['id']} is missing the keepass object.")
+            print(f"Unlocking KeePass for {client_id}/{record['id']}…", flush=True)
             profile, vpn_username, vpn_password = lookup_keepass_vpn(credential)
             profile_path = password_path = None
             state = None
@@ -1335,8 +1335,8 @@ def handle_vpn(client_id: str, config: dict[str, Any], action: str, arguments: l
                     profile_path = Path(stream.name)
                     stream.write(profile)
                 state = {"uuid": None, "import_name": profile_path.stem}
-                # Název zapisujeme před importem: po přerušení lze najít i profil,
-                # jehož UUID proces ještě nestačil převzít.
+                # Save the name before import so an interrupted operation can find a profile
+                # even if its UUID has not yet been received.
                 runtime.save(state)
                 import_started = True
                 imported = subprocess.run(
@@ -1345,20 +1345,20 @@ def handle_vpn(client_id: str, config: dict[str, Any], action: str, arguments: l
                     env={**os.environ, "LC_ALL": "C", "NM_CERT_PATH": str(runtime.path)},
                 )
                 if imported.returncode != 0:
-                    raise OutsError("OpenVPN přílohu nelze importovat do NetworkManageru.")
+                    raise OutsError("Cannot import the OpenVPN attachment into NetworkManager.")
                 output = imported.stdout.decode("utf-8", errors="replace").strip()
                 match = re.fullmatch(
                     r"Connection '[^\r\n]*' \((" + NM_UUID_RE.pattern + r")\) successfully added\.", output,
                 )
                 if match is None:
-                    raise OutsError("NetworkManager nevrátil UUID importovaného VPN profilu.")
+                    raise OutsError("NetworkManager did not return the imported VPN profile UUID.")
                 state["uuid"] = match.group(1)
                 runtime.save(state)
                 uuid = state["uuid"]
                 if run([nmcli, "connection", "modify", "--temporary", "uuid", uuid, "connection.id", runtime.name]) != 0:
-                    raise OutsError("Importovaný VPN profil nelze přejmenovat.")
+                    raise OutsError("Cannot rename the imported VPN profile.")
                 if run([nmcli, "connection", "modify", "--temporary", "uuid", uuid, "+vpn.data", f"username={vpn_username}"]) != 0:
-                    raise OutsError("Do importovaného VPN profilu nelze nastavit uživatelské jméno.")
+                    raise OutsError("Cannot set the username in the imported VPN profile.")
                 payload = bytearray(b"vpn.secrets.password:")
                 payload.extend(vpn_password)
                 payload.append(10)
@@ -1370,9 +1370,9 @@ def handle_vpn(client_id: str, config: dict[str, Any], action: str, arguments: l
                     for index in range(len(payload)):
                         payload[index] = 0
                 if run([nmcli, "connection", "up", "uuid", uuid, "passwd-file", str(password_path)]) != 0:
-                    raise OutsError(f"VPN {client_id}/{record['id']} se nepodařilo aktivovat.")
+                    raise OutsError(f"Failed to activate VPN {client_id}/{record['id']}.")
                 keep_runtime = True
-                print(f"VPN {client_id}/{record['id']} je aktivní.", flush=True)
+                print(f"VPN {client_id}/{record['id']} is active.", flush=True)
                 return 0
             finally:
                 for buffer in (profile, vpn_password):
@@ -1383,16 +1383,16 @@ def handle_vpn(client_id: str, config: dict[str, Any], action: str, arguments: l
                         try:
                             path.unlink(missing_ok=True)
                         except OSError:
-                            print("Varování: soukromý runtime soubor VPN nelze odstranit; opakujte vpn-down.", file=sys.stderr)
+                            print("Warning: cannot remove a private VPN runtime file; retry vpn-down.", file=sys.stderr)
                 if not keep_runtime:
                     try:
                         uuid = (state.get("uuid") or vpn_profile_uuid(nmcli, "id", state["import_name"])) if import_started else None
                         if uuid is None or delete_vpn_profile(nmcli, uuid):
                             runtime.cleanup()
                         else:
-                            print("Varování: VPN profil zůstává uložen pro další vpn-down.", file=sys.stderr)
+                            print("Warning: the VPN profile is retained for another vpn-down.", file=sys.stderr)
                     except (OSError, OutsError):
-                        print("Varování: stav VPN nelze ověřit; runtime soubory zůstávají pro další vpn-down.", file=sys.stderr)
+                        print("Warning: cannot check VPN state; runtime files are retained for another vpn-down.", file=sys.stderr)
     except runtime_tools.VpnError as exc:
         raise OutsError(str(exc)) from exc
 
@@ -1406,11 +1406,11 @@ def dispatch_action(
     """Dispatch both explicit commands and selections from the text menu."""
     if action == "show":
         if arguments:
-            raise OutsError("Příkaz show nepřijímá další argument.")
+            raise OutsError("The show command does not accept additional arguments.")
         print_company(config)
         return 0
     if action in {"ssh", "rdp", "virt-viewer"} and arguments:
-        log_event("připojování", protokol=action)
+        log_event("connecting", protocol=action)
     if action == "ssh":
         return handle_ssh(client_id, config, arguments)
     if action == "rdp":
@@ -1422,12 +1422,12 @@ def dispatch_action(
     if action in {"vpn", "vpn-up", "vpn-down"}:
         return handle_vpn(client_id, config, action, arguments)
     raise OutsError(
-        f"Neznámý typ '{action}'. Použijte ssh, rdp, virt-viewer, web, vpn, vpn-up nebo vpn-down."
+        f"Unknown type '{action}'. Use ssh, rdp, virt-viewer, web, vpn, vpn-up, or vpn-down."
     )
 
 
 def connection_tools():
-    # Stejný modul se načítá ze zdrojů i z balíčku v Nix store.
+    # Load the same module from the source tree and the package in the Nix store.
     import importlib.util
     spec = importlib.util.spec_from_file_location("outs_connections", ROOT / "bin" / "connections.py")
     module = importlib.util.module_from_spec(spec)
@@ -1442,12 +1442,12 @@ def ask_password(prompt: str) -> str:
 
 
 class Cancelled(Exception):
-    """Uživatel zavřel dialog; nic dalšího neprovádíme."""
+    """The user closed the dialog; no further action is taken."""
 
 
 def install_signal_handlers() -> None:
     def exit_on_signal(signum, _frame):
-        # Vyvolání výjimky zachová úklid klíčů a VPN v běžných finally blocích.
+        # Raising an exception preserves key and VPN cleanup in normal finally blocks.
         raise SystemExit(128 + signum)
 
     for signum in (signal.SIGTERM, signal.SIGHUP):
@@ -1464,7 +1464,7 @@ def run_main(arguments: list[str]) -> int:
         return 0
     if arguments[0] == "ls":
         if len(arguments) != 1:
-            raise OutsError("Použití: outs ls")
+            raise OutsError("Usage: outs ls")
         print_companies()
         return 0
     if arguments[0] == "desktop":
@@ -1507,26 +1507,26 @@ def main(arguments: list[str]) -> int:
     try:
         SESSION_LOG = module.SessionLog()
     except OSError as exc:
-        raise OutsError(f"Nelze vytvořit provozní log v {module.log_directory()}: {exc}") from exc
+        raise OutsError(f"Cannot create an activity log in {module.log_directory()}: {exc}") from exc
     LAST_LOG_PATH = SESSION_LOG.path
-    action = arguments[0] if arguments[0] in {"new", "manage", "connect", "keepass", "desktop"} else "původní příkaz"
-    log_event("spuštění", akce=action)
+    action = arguments[0] if arguments[0] in {"new", "manage", "connect", "keepass", "desktop"} else "legacy command"
+    log_event("startup", action=action)
     if action == "connect" and len(arguments) > 1 and re.fullmatch(r"[a-f0-9]{32}", arguments[1]):
-        log_event("vybrané připojení", id=arguments[1])
+        log_event("selected connection", id=arguments[1])
     try:
         result = run_main(arguments)
-        log_event("dokončeno", návratový_kód=result)
+        log_event("finished", exit_code=result)
         return result
     except (Cancelled, KeyboardInterrupt):
-        log_event("zrušeno uživatelem")
+        log_event("canceled by user")
         raise
     except SystemExit as exc:
         if exc.code in (128 + signal.SIGTERM, 128 + signal.SIGHUP):
-            log_event("zrušeno signálem", signál=exc.code - 128)
+            log_event("canceled by signal", signal=exc.code - 128)
         raise
     except Exception as exc:
-        # Text výjimky může obsahovat cestu k trezoru nebo přílohu; neukládáme jej.
-        log_event("chyba", fáze=SESSION_LOG.stage, typ=type(exc).__name__, errno=getattr(exc, "errno", None))
+        # Exception text may contain a database path or attachment; do not log it.
+        log_event("error", stage=SESSION_LOG.stage, type=type(exc).__name__, errno=getattr(exc, "errno", None))
         raise
     finally:
         SESSION_LOG.close()
@@ -1542,12 +1542,12 @@ if __name__ == "__main__":
     except (OutsError, OSError) as exc:
         if GUI_MODE:
             try:
-                connection_tools().dialog(SimpleNamespace(**globals()), "--error", "--text=" + str(exc) + (f"\n\nProvozní log: {LAST_LOG_PATH}" if LAST_LOG_PATH else ""))
+                connection_tools().dialog(SimpleNamespace(**globals()), "--error", "--text=" + str(exc) + (f"\n\nActivity log: {LAST_LOG_PATH}" if LAST_LOG_PATH else ""))
             except (Cancelled, OutsError, OSError):
                 pass
-        print(f"Chyba: {exc}", file=sys.stderr)
+        print(f"Error: {exc}", file=sys.stderr)
         if LAST_LOG_PATH:
-            print(f"Provozní log: {LAST_LOG_PATH}", file=sys.stderr)
+            print(f"Activity log: {LAST_LOG_PATH}", file=sys.stderr)
         raise SystemExit(1) from None
     except KeyboardInterrupt:
         raise SystemExit(130) from None

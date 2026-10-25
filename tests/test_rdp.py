@@ -109,8 +109,8 @@ class RdpProcessTests(unittest.TestCase):
             self.addCleanup(state.stop)
 
     def test_manual_debug_and_keepass_share_exit_classification(self):
-        # Neškodný proces přijímá stejný řádkový vstup jako FreeRDP.
-        # K síti ani ke grafické relaci se nepřipojuje.
+        # A harmless process accepts the same line-based input as FreeRDP.
+        # It does not connect to the network or a graphical session.
         with tempfile.TemporaryDirectory() as directory:
             client = Path(directory) / "fake-rdp"
             client.write_text("#!" + sys.executable + "\n" + """import sys
@@ -160,14 +160,14 @@ sys.exit(int(code))
         process = Mock(pid=123)
         process.poll.return_value = 131
         with patch.object(outs, "active_vpn_names", return_value=[]), \
-             self.assertRaisesRegex(outs.OutsError, "kódem 131"):
+             self.assertRaisesRegex(outs.OutsError, "code 131"):
             outs.report_detached_rdp(process)
 
     def test_line_protocol_rejects_control_characters_in_password_and_wipes_it(self):
         for character in (b"\n", b"\r", b"\0"):
             with self.subTest(character=character), patch.object(outs.subprocess, "Popen") as launch:
                 password = bytearray(b"secret" + character + b"/drive:fixture,/tmp")
-                with self.assertRaisesRegex(outs.OutsError, "RDP heslo"):
+                with self.assertRaisesRegex(outs.OutsError, "RDP password"):
                     outs.run_rdp_with_password(["fake-rdp", "/v:example.test"], password, False)
                 launch.assert_not_called()
                 self.assertEqual(set(password), {0})
@@ -178,7 +178,7 @@ sys.exit(int(code))
                 with self.subTest(character=character, manual=manual), \
                      patch.object(outs.subprocess, "Popen") as launch:
                     password = None if manual else bytearray(b"secret")
-                    with self.assertRaisesRegex(outs.OutsError, "RDP parametr"):
+                    with self.assertRaisesRegex(outs.OutsError, "RDP argument"):
                         outs.run_rdp(["fake-rdp", "/t:fixture" + character + "/v:other"],
                                      detached=False, password=password)
                     launch.assert_not_called()

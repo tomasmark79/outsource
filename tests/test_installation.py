@@ -28,7 +28,7 @@ class InstallationTests(unittest.TestCase):
             os.environ, {"OUTSOURCE_CLIENTS_DIR": str(Path(directory) / "missing")}
         ):
             loaded = runpy.run_path(str(Path(outs.__file__)))
-            with self.assertRaisesRegex(loaded["OutsError"], "Chybí adresář profilů"):
+            with self.assertRaisesRegex(loaded["OutsError"], "Missing profiles directory"):
                 loaded["all_configs"]()
 
     def test_local_config_uses_xdg_directory(self):

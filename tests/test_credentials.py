@@ -1,4 +1,4 @@
-"""Ověření identity položky používá jen umělé výstupy KeePassXC."""
+"""Entry identity verification uses only synthetic KeePassXC output."""
 
 from pathlib import Path
 import subprocess
@@ -42,12 +42,12 @@ class CredentialTests(unittest.TestCase):
         self.assertTrue(all("/fake.key" in call for call in calls))
 
     def test_duplicate_path_cannot_export_a_different_entry(self):
-        with self.assertRaisesRegex(outs.OutsError, "jinou SSH položku"):
+        with self.assertRaisesRegex(outs.OutsError, "a different SSH entry"):
             self.invoke("2" * 32)
         self.assertNotIn("attachment-export", [call[1] for call in self.calls])
 
     def test_invalid_uuid_is_not_exported(self):
-        with self.assertRaisesRegex(outs.OutsError, "neověřil UUID"):
+        with self.assertRaisesRegex(outs.OutsError, "could not verify the SSH entry UUID"):
             self.invoke("invalid")
         self.assertEqual(len(self.calls), 2)
 

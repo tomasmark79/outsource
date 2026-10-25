@@ -33,7 +33,7 @@ class CompletionTests(unittest.TestCase):
     def complete(self, *words):
         output = io.StringIO()
         with contextlib.redirect_stdout(output), patch.object(
-            outs, "run_main", side_effect=AssertionError("spuštění příkazu")
+            outs, "run_main", side_effect=AssertionError("command execution")
         ), patch.object(outs, "connection_tools", side_effect=AssertionError("dialog")):
             self.assertEqual(outs.main(["--complete", *words]), 0)
         return output.getvalue().splitlines()
@@ -77,12 +77,12 @@ class CompletionTests(unittest.TestCase):
         directory.mkdir(parents=True)
         connection_id = "b" * 32
         (directory / (connection_id + ".json")).write_text(
-            json.dumps({"name": "Pracovní\nplocha\t\u001b"}))
+            json.dumps({"name": "Workstation\ncafé\t\u001b"}))
         (directory / ("c" * 32 + ".json")).write_text("{")
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             self.assertEqual(outs.main(["--complete-descriptions", "connect", ""]), 0)
-        self.assertEqual(output.getvalue(), connection_id + "\tPracovní plocha\n")
+        self.assertEqual(output.getvalue(), connection_id + "\tWorkstation café\n")
         self.assertEqual(self.complete("connect", "b"), [connection_id])
 
     def test_empty_profile_offers_only_show(self):
@@ -132,7 +132,7 @@ class CompletionTests(unittest.TestCase):
         project = Path(outs.__file__).resolve().parents[1]
         directory = self.root / "outsource" / "connections"
         directory.mkdir(parents=True)
-        for letter, name in (("a", "Pracovní plocha"), ("b", "Server")):
+        for letter, name in (("a", "Workstation café"), ("b", "Server")):
             (directory / (letter * 32 + ".json")).write_text(json.dumps({"name": name}))
         environment = dict(os.environ, XDG_CONFIG_HOME=str(self.root),
                            PYTHON_FOR_TEST=sys.executable, OUTS_FOR_TEST=str(project / "bin/outs"))
@@ -145,5 +145,5 @@ class CompletionTests(unittest.TestCase):
             "bash", str(project / "completions/outs.bash"),
         ], env=environment, capture_output=True, text=True, check=True)
         self.assertEqual(result.stdout.splitlines(), [
-            "a" * 32 + "  Pracovní plocha", "b" * 32 + "  Server", "a" * 32, "b" * 32])
+            "a" * 32 + "  Workstation café", "b" * 32 + "  Server", "a" * 32, "b" * 32])
         self.assertEqual(result.stderr, "")

@@ -1,4 +1,4 @@
-name: Kontrola Outsource
+name: Check Outsource
 on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
@@ -14,7 +14,7 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-      - name: Testy a balíček bez místních checkoutů
+      - name: Tests and package without local checkouts
         run: |
           nix flake check --no-update-lock-file --option allow-import-from-derivation false
           nix build --no-update-lock-file --option allow-import-from-derivation false

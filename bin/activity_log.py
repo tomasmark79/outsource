@@ -1,4 +1,4 @@
-"""Omezené provozní záznamy bez argumentů příkazů a obsahu vzdálené relace."""
+"""Bounded activity logs excluding command arguments and remote session contents."""
 
 from datetime import datetime, timezone
 import fcntl
@@ -13,7 +13,7 @@ import time
 MAX_FILES = 100
 MAX_AGE = 30 * 24 * 60 * 60
 MAX_BYTES = 2 * 1024 * 1024
-# Ukládáme pouze známé kódy, nikdy celý výstup klienta.
+# Record only known codes, never full client output.
 ERROR_CODES = {
     'ERRCONNECT_CONNECT_FAILED', 'ERRCONNECT_DNS_NAME_NOT_FOUND',
     'ERRCONNECT_DNS_ERROR', 'ERRCONNECT_CONNECT_TRANSPORT_FAILED',
@@ -27,14 +27,14 @@ ERROR_CODES = {
     'ERRINFO_IDLE_TIMEOUT', 'ERRINFO_LOGON_TIMEOUT',
 }
 DIAGNOSTICS = {
-    'connection refused': 'Server odmítl spojení.',
-    'connection timed out': 'Vypršel čas pro navázání spojení.',
-    'no route to host': 'Síťová cesta k serveru není dostupná.',
-    'name or service not known': 'Název serveru se nepodařilo přeložit.',
-    'permission denied': 'Přístup byl odmítnut.',
-    'authentication failed': 'Přihlášení selhalo.',
-    'certificate verify failed': 'Ověření certifikátu selhalo.',
-    'unable to connect to libvirt': 'Připojení k libvirt selhalo.',
+    'connection refused': 'The server refused the connection.',
+    'connection timed out': 'The connection timed out.',
+    'no route to host': 'No route to the server is available.',
+    'name or service not known': 'The server name could not be resolved.',
+    'permission denied': 'Permission denied.',
+    'authentication failed': 'Authentication failed.',
+    'certificate verify failed': 'Certificate verification failed.',
+    'unable to connect to libvirt': 'Failed to connect to libvirt.',
 }
 
 
@@ -55,7 +55,7 @@ def prune(directory):
         try:
             if index < MAX_FILES - 1 and time.time() - path.stat().st_mtime < MAX_AGE:
                 continue
-            # Otevřené relace mají zámek a úklid je přeskočí.
+            # Open sessions hold a lock and are skipped during cleanup.
             fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
             with os.fdopen(fd, 'r+') as stream:
                 try:
@@ -79,35 +79,35 @@ class SessionLog:
         fcntl.flock(self.stream, fcntl.LOCK_EX)
         self.size = 0
         self.full = False
-        self.stage = 'spuštění'
+        self.stage = 'startup'
         self.codes = set()
 
     def write(self, event, **fields):
         self.stage = event
         if self.full:
             return
-        record = {'čas': datetime.now(timezone.utc).isoformat(), 'událost': event, **fields}
+        record = {'timestamp': datetime.now(timezone.utc).isoformat(), 'event': event, **fields}
         line = json.dumps(record, ensure_ascii=False) + '\n'
         if self.size + len(line.encode('utf-8')) > MAX_BYTES:
-            line = json.dumps({'událost': 'Dosažen limit velikosti logu.'}, ensure_ascii=False) + '\n'
+            line = json.dumps({'event': 'Log size limit reached.'}, ensure_ascii=False) + '\n'
             self.full = True
         try:
             self.stream.write(line)
             self.stream.flush()
             self.size += len(line.encode('utf-8'))
         except OSError:
-            # Zaplněný disk nesmí ukončit již běžící vzdálenou relaci.
+            # A full disk must not terminate a running remote session.
             self.full = True
 
     def diagnostic(self, chunk):
         text = chunk.decode('utf-8', errors='replace') if isinstance(chunk, bytes) else chunk
         codes = set(re.findall(r'\b(?:ERRCONNECT|ERRINFO)_[A-Z0-9_]+\b', text)) & ERROR_CODES
         for code in sorted(codes - self.codes):
-            self.write('diagnostika klienta', kód=code)
+            self.write('client diagnostic', code=code)
             self.codes.add(code)
         for needle, message in DIAGNOSTICS.items():
             if needle in text.lower() and needle not in self.codes:
-                self.write('diagnostika klienta', zpráva=message)
+                self.write('client diagnostic', message=message)
                 self.codes.add(needle)
 
     def close(self):

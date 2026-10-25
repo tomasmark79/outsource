@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=Vzdálená připojení
-Comment=Přidat, upravit nebo odstranit zástupce RDP, SSH a virt-viewer
+Name=Remote Connections
+Comment=Add, edit, or remove RDP, SSH, and virt-viewer launchers
 Exec=outs manage
 Icon=outs-rdp
 Terminal=false

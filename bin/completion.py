@@ -1,4 +1,4 @@
-"""Doplňování argumentů bez spouštění klientů, dialogů a provozního logování."""
+"""Argument completion without launching clients, dialogs, or activity logging."""
 
 import re
 
@@ -9,7 +9,7 @@ DESKTOP_ACTIONS = ("ssh", "rdp", "virt-viewer", "web", "vpn-up", "vpn-down")
 
 
 def connection_descriptions(api, prefix):
-    """Názvy slouží jen k zobrazení, do příkazové řádky se vkládá původní ID."""
+    """Names are only displayed; the original ID is inserted into the command line."""
     directory = api.CONFIG_HOME / "outsource" / "connections"
     result = []
     for path in sorted(directory.glob("*.json")):
@@ -19,7 +19,7 @@ def connection_descriptions(api, prefix):
             name = api.read_json(path).get("name", "")
             if not isinstance(name, str):
                 name = ""
-            # Řídicí znaky z konfigurace nesmějí měnit terminál ani formát výstupu.
+            # Control characters from configuration must not affect the terminal or output format.
             name = " ".join("".join(c for c in name if c.isprintable() or c.isspace()).split())
             result.append((path.stem, name))
         except (api.OutsError, OSError, UnicodeError):
@@ -28,7 +28,7 @@ def connection_descriptions(api, prefix):
 
 
 def candidates(api, words):
-    # Poslední slovo je právě doplňovaný prefix, včetně prázdného řetězce.
+    # The last word is the prefix being completed, including an empty string.
     words = words or [""]
     previous, prefix = words[:-1], words[-1]
 
@@ -59,7 +59,7 @@ def candidates(api, words):
             profiles.append((config, [name for name in names
                                       if isinstance(name, str) and api.CLIENT_RE.fullmatch(name)]))
         except (api.OutsError, OSError, UnicodeError):
-            # Rozbitý nebo právě přepisovaný profil nesmí blokovat ostatní návrhy.
+            # A broken profile or one being rewritten must not block other suggestions.
             continue
 
     desktop = bool(previous and previous[0] == "desktop")
