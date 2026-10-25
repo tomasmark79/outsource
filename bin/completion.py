@@ -8,6 +8,25 @@ ACTIONS = ("show", "ssh", "rdp", "virt-viewer", "web", "vpn", "vpn-up", "vpn-dow
 DESKTOP_ACTIONS = ("ssh", "rdp", "virt-viewer", "web", "vpn-up", "vpn-down")
 
 
+def connection_descriptions(api, prefix):
+    """Názvy slouží jen k zobrazení, do příkazové řádky se vkládá původní ID."""
+    directory = api.CONFIG_HOME / "outsource" / "connections"
+    result = []
+    for path in sorted(directory.glob("*.json")):
+        if not api.UUID_RE.fullmatch(path.stem) or not path.stem.startswith(prefix):
+            continue
+        try:
+            name = api.read_json(path).get("name", "")
+            if not isinstance(name, str):
+                name = ""
+            # Řídicí znaky z konfigurace nesmějí měnit terminál ani formát výstupu.
+            name = " ".join("".join(c for c in name if c.isprintable() or c.isspace()).split())
+            result.append((path.stem, name))
+        except (api.OutsError, OSError, UnicodeError):
+            continue
+    return result
+
+
 def candidates(api, words):
     # Poslední slovo je právě doplňovaný prefix, včetně prázdného řetězce.
     words = words or [""]
@@ -51,8 +70,18 @@ def candidates(api, words):
     matches = [config for config, names in profiles if args[0] in names]
     if len(matches) != 1:
         return []
+    def available(action):
+        if action == "show":
+            return True
+        section = "vpn" if action in {"vpn-up", "vpn-down"} else action
+        records = matches[0].get(section, [])
+        return isinstance(records, list) and any(
+            isinstance(record, dict) and isinstance(record.get("id"), str)
+            and api.TARGET_RE.fullmatch(record["id"]) for record in records
+        )
     if len(args) == 1:
-        return matching(DESKTOP_ACTIONS if desktop else ACTIONS)
+        return matching(action for action in (DESKTOP_ACTIONS if desktop else ACTIONS)
+                        if available(action))
     action = args[1]
     if action not in (DESKTOP_ACTIONS if desktop else ACTIONS):
         return []

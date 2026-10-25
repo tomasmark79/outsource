@@ -46,6 +46,8 @@ class CompletionTests(unittest.TestCase):
 
     def test_actions_targets_and_aliases(self):
         self.assertIn("rdp", self.complete("demo", ""))
+        self.assertNotIn("virt-viewer", self.complete("demo", ""))
+        self.assertNotIn("virt-viewer", self.complete("desktop", "demo", ""))
         self.assertEqual(self.complete("demo", "ssh", "ba"), ["bastion"])
         self.assertEqual(self.complete("example", "vpn-down", ""), ["office"])
         self.assertEqual(self.complete("example", "web", ""), ["portal"])
@@ -69,6 +71,27 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(self.complete("connect", "a"), [connection_id])
         self.assertEqual(self.complete("connect", connection_id, ""), ["--gui"])
         self.assertEqual(self.complete("connect", connection_id, "--gui", ""), [])
+
+    def test_descriptions_preserve_ids_and_clean_terminal_controls(self):
+        directory = self.root / "outsource" / "connections"
+        directory.mkdir(parents=True)
+        connection_id = "b" * 32
+        (directory / (connection_id + ".json")).write_text(
+            json.dumps({"name": "Pracovní\nplocha\t\u001b"}))
+        (directory / ("c" * 32 + ".json")).write_text("{")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(outs.main(["--complete-descriptions", "connect", ""]), 0)
+        self.assertEqual(output.getvalue(), connection_id + "\tPracovní plocha\n")
+        self.assertEqual(self.complete("connect", "b"), [connection_id])
+
+    def test_empty_profile_offers_only_show(self):
+        profile = self.clients / "empty" / "config.json"
+        profile.parent.mkdir()
+        profile.write_text(json.dumps({"company": {"id": "empty"}, "rdp": [],
+                                       "ssh": [None, {"id": "bad\nvalue"}]}))
+        self.assertEqual(self.complete("empty", ""), ["show"])
+        self.assertEqual(self.complete("desktop", "empty", ""), [])
 
     def test_missing_and_broken_profiles(self):
         broken = self.clients / "broken" / "config.json"
@@ -104,3 +127,23 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(result.stderr, "")
         self.assertFalse((self.root / "state").exists())
         self.assertFalse((self.root / "outsource").exists())
+
+    def test_bash_lists_names_only_when_displaying_alternatives(self):
+        project = Path(outs.__file__).resolve().parents[1]
+        directory = self.root / "outsource" / "connections"
+        directory.mkdir(parents=True)
+        for letter, name in (("a", "Pracovní plocha"), ("b", "Server")):
+            (directory / (letter * 32 + ".json")).write_text(json.dumps({"name": name}))
+        environment = dict(os.environ, XDG_CONFIG_HOME=str(self.root),
+                           PYTHON_FOR_TEST=sys.executable, OUTS_FOR_TEST=str(project / "bin/outs"))
+        result = subprocess.run([
+            "bash", "--noprofile", "--norc", "-c",
+            'outs() { "$PYTHON_FOR_TEST" "$OUTS_FOR_TEST" "$@"; }; '
+            'source "$1"; COMP_WORDS=(outs connect ""); COMP_CWORD=2; '
+            'COMP_TYPE=63; _outs_complete; printf "%s\\n" "${COMPREPLY[@]}"; '
+            'COMP_TYPE=9; _outs_complete; printf "%s\\n" "${COMPREPLY[@]}"',
+            "bash", str(project / "completions/outs.bash"),
+        ], env=environment, capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout.splitlines(), [
+            "a" * 32 + "  Pracovní plocha", "b" * 32 + "  Server", "a" * 32, "b" * 32])
+        self.assertEqual(result.stderr, "")

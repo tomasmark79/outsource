@@ -1481,12 +1481,19 @@ def run_main(arguments: list[str]) -> int:
 
 def main(arguments: list[str]) -> int:
     global SESSION_LOG, LAST_LOG_PATH, GUI_MODE
-    if arguments and arguments[0] == "--complete":
+    if arguments and arguments[0] in {"--complete", "--complete-descriptions"}:
         import importlib.util
         spec = importlib.util.spec_from_file_location("outs_completion", ROOT / "bin" / "completion.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        for candidate in module.candidates(SimpleNamespace(**globals()), arguments[1:]):
+        api = SimpleNamespace(**globals())
+        if arguments[0] == "--complete-descriptions":
+            words = arguments[1:]
+            if len(words) == 2 and words[0] == "connect":
+                for connection_id, name in module.connection_descriptions(api, words[1]):
+                    print(f"{connection_id}\t{name}")
+            return 0
+        for candidate in module.candidates(api, arguments[1:]):
             print(candidate)
         return 0
     GUI_MODE = bool(arguments and (arguments[0] in {"new", "manage", "keepass"} or (arguments[0] == "connect" and "--gui" in arguments)))

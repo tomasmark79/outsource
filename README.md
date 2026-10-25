@@ -135,6 +135,8 @@ ls -lt ~/.local/share/logs/outsource/
 
 Balíček obsahuje doplňování pro Bash: Tab nabízí příkazy, ID uložených připojení,
 firmy a jejich aliasy, cíle a základní přepínače. Po instalaci otevři nový shell.
+Nabízí pouze typy připojení s uloženými cíli. U `outs connect ` dvojí Tab
+zobrazí vedle ID také názvy připojení; do příkazu se vkládá samotné ID.
 Při práci přímo z checkoutu jej načti pomocí `source completions/outs.bash`
 a zajisti, aby byl příkaz `outs` v `PATH`. Doplňování pouze čte konfiguraci;
 neotevírá připojení ani KeePassXC a nevytváří provozní logy.
