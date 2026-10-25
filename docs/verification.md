@@ -4,13 +4,16 @@
 
 Verified on 2026-10-25 on `x86_64-linux` with NixOS, GNOME, and Wayland.
 
-### Automated checks
+### Local automated checks
 
 - All 102 Python tests passed using temporary directories and mock clients.
 - `nix flake check --no-update-lock-file` passed for the native platform.
 - `nix build --no-update-lock-file` passed.
 - The built package includes English help, desktop launchers, documentation, and
   Bash completion. Connection and desktop identifiers remain unchanged.
+
+GitHub Actions was disabled in the repository settings during release verification;
+no hosted CI run is claimed.
 
 ### Live first-run smoke test
 
