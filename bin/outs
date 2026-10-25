@@ -1481,6 +1481,14 @@ def run_main(arguments: list[str]) -> int:
 
 def main(arguments: list[str]) -> int:
     global SESSION_LOG, LAST_LOG_PATH, GUI_MODE
+    if arguments and arguments[0] == "--complete":
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("outs_completion", ROOT / "bin" / "completion.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for candidate in module.candidates(SimpleNamespace(**globals()), arguments[1:]):
+            print(candidate)
+        return 0
     GUI_MODE = bool(arguments and (arguments[0] in {"new", "manage", "keepass"} or (arguments[0] == "connect" and "--gui" in arguments)))
     LAST_LOG_PATH = None
     if not arguments or arguments[0] in {"help", "-h", "--help", "ls"}:

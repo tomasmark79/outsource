@@ -34,6 +34,7 @@
             pkgs.runCommand "outsource-tests"
               {
                 nativeBuildInputs = [
+                  pkgs.bashInteractive
                   pkgs.python3
                   pkgs.glib.bin
                 ];

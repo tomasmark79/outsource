@@ -2,6 +2,8 @@
   lib,
   stdenvNoCC,
   makeWrapper,
+  installShellFiles,
+  bashInteractive,
   python3,
   freerdp,
   keepassxc,
@@ -40,14 +42,16 @@ stdenvNoCC.mkDerivation {
     fileset = lib.fileset.unions [
       (lib.fileset.fileFilter (file: file.name == "outs" || file.hasExt "py") ./bin)
       ./assets
+      ./completions
       ./LICENSE
       ./README.md
       (lib.fileset.fileFilter (file: file.hasExt "md") ./docs)
       (lib.fileset.fileFilter (file: file.hasExt "py") ./tests)
     ];
   };
-  nativeBuildInputs = [ makeWrapper ];
+  nativeBuildInputs = [ makeWrapper installShellFiles ];
   nativeCheckInputs = [
+    bashInteractive
     python3
     glib.bin
     desktop-file-utils
@@ -65,6 +69,7 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
     mkdir -p "$out/share/outsource" "$out/bin" "$out/share/icons/hicolor/scalable/apps" "$out/share/applications"
     cp -r bin assets "$out/share/outsource/"
+    installShellCompletion --bash --name outs completions/outs.bash
     cp assets/*.svg "$out/share/icons/hicolor/scalable/apps/"
     cp assets/*.desktop "$out/share/applications/"
     mkdir -p "$out/share/doc/outsource"

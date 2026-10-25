@@ -133,6 +133,12 @@ ls -lt ~/.local/share/logs/outsource/
 
 ## Spuštění z terminálu
 
+Balíček obsahuje doplňování pro Bash: Tab nabízí příkazy, ID uložených připojení,
+firmy a jejich aliasy, cíle a základní přepínače. Po instalaci otevři nový shell.
+Při práci přímo z checkoutu jej načti pomocí `source completions/outs.bash`
+a zajisti, aby byl příkaz `outs` v `PATH`. Doplňování pouze čte konfiguraci;
+neotevírá připojení ani KeePassXC a nevytváří provozní logy.
+
 Připojení lze spustit i jako `outs connect <id>`; ID je název jeho souboru
 bez `.json`. Varianta `outs connect <id> --gui` používá grafické zadání hesla
 a oznámení chyb. Pro SSH používej zástupce s terminálem.
