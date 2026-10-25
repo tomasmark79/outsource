@@ -184,7 +184,7 @@ class ConnectionTests(unittest.TestCase):
                 deadline = time.monotonic() + 5
                 while not capture_path.exists() and time.monotonic() < deadline:
                     time.sleep(0.01)
-                self.assertTrue(capture_path.exists(), 'Fixture nedostala argumenty.')
+                self.assertTrue(capture_path.exists(), 'The fixture did not receive its arguments.')
                 args = json.loads(capture_path.read_text())
                 self.assertEqual(args, [
                     '--gapplication-app-id=org.nixon.outsource.ssh.c' + self.connection['id'],

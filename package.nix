@@ -35,7 +35,7 @@ let
 in
 stdenvNoCC.mkDerivation {
   pname = "outsource";
-  version = "2.1.0";
+  version = "2.2.0";
   # Explicit allowlist: local settings and databases must never enter the store.
   src = lib.fileset.toSource {
     root = ./.;

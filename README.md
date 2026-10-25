@@ -4,7 +4,31 @@ A simple wizard for RDP, SSH, and virt-viewer launchers in the GNOME application
 Nix installs the application and its clients. You can then add and edit connections
 without editing Nix or JSON files or rebuilding your system.
 
+## Supported environment
+
+Outsource is packaged for Linux with Nix and is intended for NixOS with the GNOME
+desktop. The graphical wizard uses Zenity; SSH launchers use a private GNOME Console
+variant, while RDP and virtual machine consoles use FreeRDP and virt-viewer.
+Desktop window grouping is designed for GNOME. Other desktops and installations
+without Nix are not currently supported.
+
+Release checks run on `x86_64-linux`. The flake also declares `aarch64-linux`, but
+that platform has not been verified on hardware.
+
 ## Installation
+
+Install the published 2.2.0 release into your user profile:
+
+```bash
+nix profile install github:tomasmark79/outsource/v2.2.0
+```
+
+Then open **Remote Connections** in the application menu, or run `outs manage`.
+To try the wizard without installing it:
+
+```bash
+nix run github:tomasmark79/outsource/v2.2.0 -- manage
+```
 
 This standalone project provides a Nix package and an optional NixOS module.
 From a checkout:
@@ -19,6 +43,8 @@ The connection manager and new connection wizard appear in the application menu.
 On NixOS, add `outsource.nixosModules.default` to your modules and set
 `programs.outsource.enable = true`. Use `programs.outsource.package` to select
 a custom package, for example one with a different KeePassXC variant.
+For a release-pinned NixOS input, use
+`outsource.url = "github:tomasmark79/outsource/v2.2.0"` in your flake inputs.
 
 The host system manages networking, NetworkManager activation, the OpenVPN plugin,
 and libvirt permissions. The module does not change them automatically.
@@ -176,6 +202,8 @@ remains separate.
 
 CI checks the flake, tests, and build without local checkouts. A successful build
 does not replace activation or live verification of window grouping in GNOME.
+See [release verification](docs/verification.md) for the checks performed for 2.2.0
+and the remaining manual desktop checks.
 A new system version becomes available after rebuilding and activating the host;
 adding connections afterward does not require activation.
 
