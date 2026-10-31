@@ -7,11 +7,10 @@ RDP RemoteApp. Keep desktop RDP as the default for existing connections.
 
 ## Approach
 
-Extend the existing RDP record with an optional `remoteapp` object containing
-`program`, optional `cmd`, and optional `workdir`. A program can be a published
+Extend the existing RDP record with an optional `remoteapp` string. A program can be a published
 alias such as `||notepad` or a Windows executable path permitted by the server.
 Reuse the current connection editor, credentials, launchers, and startup handling.
-The user confirmed Windows RemoteApp as the target.
+The user confirmed Windows RemoteApp as the target and requested a minimal extension.
 
 A separate connection type would duplicate RDP configuration and credential
 handling. Requiring raw FreeRDP arguments alone would omit discoverable editing
@@ -19,8 +18,8 @@ and validation. Extending the RDP profile is the proposed implementation.
 
 ## Behavior and constraints
 
-- The RDP editor offers desktop or RemoteApp mode and edits the application fields.
-  Switching to desktop mode removes the RemoteApp settings.
+- The RDP editor adds one optional application field. Leaving it blank removes
+  RemoteApp settings and uses desktop mode. No extra application options are added.
 - Validate the settings before starting a client, including rejecting NUL and
   newline characters. Encode values according to FreeRDP's application syntax.
 - Select a FreeRDP client supporting RemoteApp; on GNOME Wayland an X11 client

@@ -40,6 +40,37 @@ class RdpTests(unittest.TestCase):
         self.assertIn("-clipboard", command)
         self.assertFalse(any(arg.startswith(("/sound", "/audio-mode", "/microphone")) for arg in command))
 
+    def test_remoteapp_program_is_passed_as_one_argument(self):
+        for program in ['||notepad', r'C:\Program Files\Example\app.exe']:
+            for manual in (True, False):
+                with self.subTest(program=program, manual=manual):
+                    command = self.launch({'remoteapp': program}, manual=manual)
+                    self.assertIn('/app:program:' + program, command)
+                    self.assertIn('/wm-class:outs-rdp', command)
+
+    def test_empty_remoteapp_keeps_desktop_mode(self):
+        command = self.launch({'remoteapp': ''})
+        self.assertFalse(any(arg.startswith('/app:') for arg in command))
+
+    def test_invalid_remoteapp_is_rejected(self):
+        for program in [None, True, [], ' ', '||app\n/p:secret', 'a\0b', 'a\rb',
+                        '||app,cmd:unexpected', '"||app"']:
+            with self.subTest(program=program), self.assertRaises(outs.OutsError):
+                self.launch({'remoteapp': program})
+
+    def test_remoteapp_prefers_x11_client(self):
+        available = {'sdl-freerdp': '/bin/sdl-freerdp', 'xfreerdp': '/bin/xfreerdp'}
+        with patch.dict(outs.os.environ, {}, clear=True), \
+             patch.object(outs.shutil, 'which', side_effect=available.get):
+            self.assertEqual(outs.select_rdp_client(remoteapp=True), '/bin/xfreerdp')
+            self.assertEqual(outs.select_rdp_client(), '/bin/sdl-freerdp')
+
+    def test_remoteapp_requires_x11_client_without_override(self):
+        with patch.dict(outs.os.environ, {}, clear=True), \
+             patch.object(outs.shutil, 'which', return_value=None), \
+             self.assertRaisesRegex(outs.OutsError, 'RemoteApp'):
+            outs.select_rdp_client(remoteapp=True)
+
     def test_ipv6_address_is_separated_from_port(self):
         for host in ["::1", "2001:db8::1", "::ffff:192.0.2.1", "fe80::1%eth0"]:
             with self.subTest(host=host):

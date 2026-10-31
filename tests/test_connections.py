@@ -256,7 +256,7 @@ class ConnectionTests(unittest.TestCase):
 
     def test_rdp_wizard_saves_uuid_and_options(self):
         with patch.object(connections, 'choose', return_value='rdp'), \
-             patch.object(connections, 'details_form', return_value={'name': 'Windows', 'host': 'server', 'username': 'user', 'port': '', 'domain': ''}), \
+             patch.object(connections, 'details_form', return_value={'name': 'Windows', 'host': 'server', 'username': 'user', 'port': '', 'domain': '', 'remoteapp': ''}), \
              patch.object(connections, 'enter_credential', return_value={'uuid': 'b' * 32}), \
              patch.object(connections, 'dialog', side_effect=['clipboard,audio', '', '']):
             connections.edit_connection(self.api)
@@ -265,6 +265,36 @@ class ConnectionTests(unittest.TestCase):
         self.assertEqual(record['port'], 3389)
         self.assertTrue(record['clipboard'])
         self.assertEqual(record['audio'], 'local')
+
+    def test_remoteapp_wizard_and_clearing_preserve_launcher_id(self):
+        form = {'name': 'Notepad', 'host': 'server', 'username': 'user',
+                'port': '', 'domain': '', 'remoteapp': '||notepad'}
+        with patch.object(connections, 'choose', return_value='rdp'), \
+             patch.object(connections, 'details_form', return_value=form), \
+             patch.object(connections, 'enter_credential', return_value={'uuid': 'b' * 32}), \
+             patch.object(connections, 'dialog', side_effect=['clipboard', '', '']):
+            connections.edit_connection(self.api)
+        path = next(connections.data_dir(self.api).glob('*.json'))
+        previous = json.loads(path.read_text())
+        self.assertEqual(previous['record']['remoteapp'], '||notepad')
+        desktop = connections.desktop_path(self.api, previous)
+        with patch.object(connections, 'entry', side_effect=lambda api, label, default='', required=True:
+                          '' if 'RemoteApp' in label else str(default)), \
+             patch.object(connections, 'enter_credential', return_value={'uuid': 'b' * 32}), \
+             patch.object(connections, 'dialog', side_effect=['clipboard', '', '']):
+            connections.edit_connection(self.api, previous)
+        updated = json.loads(path.read_text())
+        self.assertNotIn('remoteapp', updated['record'])
+        self.assertEqual(updated['id'], previous['id'])
+        self.assertEqual(connections.desktop_path(self.api, updated), desktop)
+
+    def test_invalid_remoteapp_profile_is_not_saved(self):
+        self.connection.update(type='rdp', record={
+            'host': 'server', 'username': 'user', 'keepass': {'uuid': 'b' * 32},
+            'remoteapp': '||app,cmd:unexpected'})
+        with self.assertRaises(outs.OutsError):
+            connections.save(self.api, self.connection)
+        self.assertFalse(connections.data_dir(self.api).exists())
 
     def test_virt_viewer_wizard_does_not_need_keepass(self):
         with patch.object(connections, 'choose', return_value='virt-viewer'), \

@@ -830,12 +830,12 @@ def handle_ssh(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
                 print(f"Warning: cannot remove the temporary SSH key: {exc}", file=sys.stderr)
 
 
-def select_rdp_client() -> str:
+def select_rdp_client(*, remoteapp: bool = False) -> str:
     override = os.environ.get("RDP_CLIENT")
     if override:
         return require_program(override)
 
-    candidates = (
+    candidates = ("xfreerdp", "xfreerdp3") if remoteapp else (
         "sdl-freerdp",
         "sdl-freerdp3",
         "xfreerdp",
@@ -847,6 +847,8 @@ def select_rdp_client() -> str:
         executable = shutil.which(candidate)
         if executable:
             return executable
+    if remoteapp:
+        raise OutsError("RemoteApp requires xfreerdp (X11/XWayland). Install the outsource package through your NixOS configuration.")
     raise OutsError("No FreeRDP client is available. Install the outsource package through your NixOS configuration.")
 
 
@@ -1031,6 +1033,15 @@ def merge_rdp_options(command: list[str], options: Any) -> list[str]:
     return [command[0], *(arg for arg in command[1:] if rdp_option_key(arg) not in keys), *options]
 
 
+def rdp_remoteapp(record: dict[str, Any]) -> str:
+    program = record.get("remoteapp", "")
+    if not isinstance(program, str) or (program and not program.strip()) or any(
+        character in program for character in '\0\r\n,"'
+    ):
+        raise OutsError("RemoteApp must be an application alias or executable path without commas, quotes, NUL, or newlines.")
+    return program
+
+
 def handle_rdp(client_id: str, config: dict[str, Any], arguments: list[str]) -> int:
     if not arguments:
         records = config.get("rdp", [])
@@ -1057,6 +1068,7 @@ def handle_rdp(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
     if not TARGET_RE.fullmatch(target):
         raise OutsError(f"Invalid RDP alias '{target}'.")
     record = find_record(config, "rdp", target)
+    remoteapp = rdp_remoteapp(record)
 
     host = record["host"]
     try:
@@ -1068,7 +1080,7 @@ def handle_rdp(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
         host = f"[{host}]"
     window_class = rdp_window_class(client_id, target)
     command = [
-        select_rdp_client(),
+        select_rdp_client(remoteapp=bool(remoteapp)),
         f"/v:{host}:{record.get('port', 3389)}",
         f"/u:{record['username']}",
         "/sec:nla",
@@ -1077,6 +1089,8 @@ def handle_rdp(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
         f"/t:{client_id} — {target}",
         "+dynamic-resolution",
     ]
+    if remoteapp:
+        command.append(f"/app:program:{remoteapp}")
     keyboard_layout = record.get("keyboard_layout", "0x00000409")
     if keyboard_layout != "auto":
         if not isinstance(keyboard_layout, str) or not re.fullmatch(

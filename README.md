@@ -63,6 +63,14 @@ the save. The launcher appears in the application menu and can be pinned to the 
 Canceling the wizard does not create an incomplete connection.
 
 - **RDP:** enter the address, username, port, and optional Windows domain.
+  For a single Windows application, fill in **RemoteApp application**, for example
+  `||notepad` (a published alias) or `C:\Windows\System32\notepad.exe`.
+  Leave it blank for the full remote desktop. External RDP records use the optional
+  `"remoteapp": "||notepad"` field. Enter only the alias or executable path, without
+  arguments, commas, or quotes; paths with spaces are supported.
+  The Windows server must support RemoteApp and allow the application.
+  RemoteApp uses `xfreerdp` through X11/XWayland, including on GNOME Wayland;
+  an explicit `RDP_CLIENT` override must also support RemoteApp.
   Supply the UUID of the password entry in KeePassXC and enable clipboard sharing,
   audio, or multiple monitors as needed. When connecting, enter the database master
   password in a graphical dialog. FreeRDP runs without an extra terminal.

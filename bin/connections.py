@@ -102,6 +102,7 @@ def validate(api, connection):
         text(record.get("connect"), "libvirt connection")
     if kind == "rdp":
         text(record.get("domain", ""), "domain", required=False)
+        api.rdp_remoteapp(record)
         if not isinstance(record.get("keepass"), dict):
             raise api.OutsError("Enter the UUID of the KeePassXC entry containing the RDP password.")
         api.merge_rdp_options(["freerdp"], record.get("freerdp_args", []))
@@ -248,6 +249,7 @@ def details_form(api, kind):
         ]
         if kind == "rdp":
             fields.append(("domain", "Windows domain (optional)"))
+            fields.append(("remoteapp", "RemoteApp application (optional, e.g. ||notepad)"))
     else:
         fields += [("domain", "Virtual machine name or UUID"),
                    ("connect", "Libvirt (blank = qemu:///system)")]
@@ -302,6 +304,11 @@ def edit_connection(api, previous=None):
             dialog(api, "--error", "--text=The port must be a number from 1 to 65535.")
     if kind == "rdp":
         record["domain"] = ask("domain", "Windows domain (optional)", record.get("domain", ""), required=False)
+        remoteapp = ask("remoteapp", "RemoteApp application (blank = full desktop)", record.get("remoteapp", ""), required=False)
+        if remoteapp:
+            record["remoteapp"] = remoteapp
+        else:
+            record.pop("remoteapp", None)
         record["keepass"] = enter_credential(api, record.get("keepass"))
         options = dialog(api, "--list", "--checklist", "--text=RDP options", "--column=Enable", "--column=ID", "--column=Option",
                          "--hide-column=2", "--print-column=2", "--separator=,", "--",
