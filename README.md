@@ -4,6 +4,10 @@ A simple wizard for RDP, SSH, and virt-viewer launchers in the GNOME application
 Nix installs the application and its clients. You can then add and edit connections
 without editing Nix or JSON files or rebuilding your system.
 
+[Install](#installation) · [Manage connections](#adding-a-connection) ·
+[KeePassXC](#keepassxc) · [RemoteApp](#windows-remoteapp) ·
+[Troubleshooting](#troubleshooting) · [Development](DEVELOPMENT.md)
+
 ## Supported environment
 
 Outsource is packaged for Linux with Nix and is intended for NixOS with the GNOME
@@ -65,9 +69,8 @@ Canceling the wizard does not create an incomplete connection.
 - **RDP:** enter the address, username, port, and optional Windows domain.
   For a single Windows application, fill in **RemoteApp application**, for example
   `||notepad` (a published alias) or `C:\Windows\System32\notepad.exe`.
-  Leave it blank for the full remote desktop. RemoteApp uses the SDL3 FreeRDP
-  client natively on Wayland, with sharp pixel mapping, 150% desktop scaling,
-  and the graphics settings described in [Windows RemoteApp](#windows-remoteapp).
+  Leave it blank for the full remote desktop; see [Windows RemoteApp](#windows-remoteapp)
+  for server setup and display settings.
   Supply the UUID of the password entry in KeePassXC. In **RDP audio playback**,
   choose **Play audio on this computer** (`local`, the default), **Play audio on
   the remote computer** (`remote`), or **Do not play audio** (`off`). This choice
@@ -124,11 +127,64 @@ outs keepass
 The wizard uses `keepassxc-cli`. Even if the database is open in KeePassXC, reading
 it requires the master password again. A master password and an optional key file
 are supported. Passwords and private keys are never stored in launchers or the Nix
-store. See the [KeePassXC guide](docs/keepassxc.md) for details and the lifetime of
-temporary VPN keys.
+store. This integration does not use Secret Service or change GNOME Keyring.
 
 SSH does not open the database by default. If your keys are in KeePassXC, you can
 use its SSH agent integration and keep system authentication selected in the wizard.
+
+### Credentials and temporary files
+
+Database and optional key file paths are local to this machine. The wizard saves
+them in `~/.config/outsource/config.local.json`:
+
+```json
+{
+  "keepass": {
+    "database": "/path/to/database.kdbx",
+    "key_file": "/path/to/key-file"
+  }
+}
+```
+
+Omit `key_file` or set it to `null` when unused. Each RDP record refers to an entry
+with `"keepass": {"uuid": "faa054617a774d8bad6a27cb673d9141"}`. Outsource locates
+the entry by UUID, then reads its password. The master password reaches the
+short-lived KeePassXC processes through standard input. FreeRDP receives its
+arguments through `/args-from:stdin`, keeping passwords out of the process list,
+environment, and temporary files.
+
+For an SSH key attachment, Outsource verifies the resolved entry's UUID before
+exporting the key to a random temporary file with mode `0600`. It removes the file
+when SSH exits and does not modify the SSH configuration or agent. Normal cleanup
+also runs on `SIGTERM` and `SIGHUP`; it cannot run after `SIGKILL` or a system crash.
+
+Legacy web records use the entry's `URL` and `UserName` fields. Authentication is
+left to KeePassXC-Browser; the password is not put in URLs, browser arguments, or
+the clipboard.
+
+### Legacy VPN connections
+
+Company profiles can reference an OpenVPN profile stored as a KeePassXC attachment.
+`vpn-up` exports it under `$XDG_RUNTIME_DIR/outsource/vpn`, imports a temporary
+NetworkManager profile, and removes the attachment file after activation.
+The logged-in session must supply an `XDG_RUNTIME_DIR` with mode `0700`.
+`NM_CERT_PATH` keeps extracted certificates and keys in the private runtime
+directory for the entire VPN session, including reconnections.
+
+The entry's `UserName` and `Password` supply the VPN credentials. The password is
+passed through a `0600` `nmcli passwd-file`, removed after activation. Profile
+changes also use `--temporary`; credentials are not saved in a persistent profile.
+Runtime `state.json` contains only the imported profile's UUID and name, with mode
+`0600`. A name derived from the company and VPN alias and a lock separate sessions.
+
+Exiting `vpn-up` leaves the VPN connected. Run `vpn-down` before another `vpn-up`;
+it deletes the exact NetworkManager profile by UUID before removing certificates.
+Failed or interrupted startup is cleaned up. If profile deletion fails, runtime
+state is retained for a retry so a running VPN keeps its certificates.
+Runtime files disappear after reboot. If NetworkManager retains a profile after
+its runtime state disappears, Outsource reports its UUID for manual removal
+instead of claiming ownership or success. This also applies to profiles with
+legacy `outs-company-alias` names.
 
 ## Windows RemoteApp
 
@@ -190,7 +246,8 @@ Sharpness, multi-monitor behavior, application DPI support, and responsiveness
 must be checked in a real session. AVC444 is not a guarantee of lossless output.
 Upstream documents [frame-ack:off as a connection-delay diagnostic](https://www.freerdp.com/2024/07/04/3_6_2-release);
 it improved responsiveness in the authorized live investigation behind these
-defaults. See [verification evidence and remaining checks](docs/verification.md).
+defaults. See [verification history](DEVELOPMENT.md#verification-history) for the
+evidence and outstanding desktop checks.
 
 ## Data locations
 
@@ -251,31 +308,25 @@ Their optional profiles are read from
 `~/.config/outsource/clients/<company>/config.json` or `OUTSOURCE_CLIENTS_DIR`.
 No company profiles are included in this project.
 
-## Development and verification
+## Troubleshooting
 
-From the project root:
+For a failed connection, start with the log path shown in the error message;
+see [activity logs](#activity-logs). For legacy company RDP commands,
+`outs example rdp workstation --debug` shows client output in the terminal.
+Add `--manual` to test manual authentication instead of KeePassXC.
 
-```bash
-python3 -m unittest discover -s tests -v
-nix flake check --no-update-lock-file
-nix build --no-update-lock-file
-```
+If a RemoteApp application has jumping knobs or erratic mouse dragging, try its
+absolute mouse input mode. In Bitwig, enabling **Absolute Mouse Mode** in the
+user interface settings resolved the problem in a user-reported RemoteApp session.
 
-Tests use temporary directories and mock clients; they do not open real connections
-or databases. The `Exec` regression test uses the actual Gio parser. Outside Nix,
-this test requires `gio` and is skipped if it is unavailable.
+If RemoteApp stops working after a Windows update, check the host's update history
+as well as the client log. The user reported that removing Windows update
+`KB5127936` restored RemoteApp in one session; this is a troubleshooting observation,
+not a confirmed general cause or a recommendation to remove security updates.
 
-[package.nix](package.nix) packages the application, clients, and desktop files.
-[module.nix](module.nix) adds the package to NixOS. The private GNOME Console variant
-provides automatic SSH terminal closing and window identity; the package recipe
-documents why it is needed and when it can be removed. The regular GNOME Console
-remains separate.
+## Development
 
-CI checks the flake, tests, and build without local checkouts. A successful build
-does not replace activation or live verification of window grouping in GNOME.
-See [release verification](docs/verification.md) for the checks performed for 2.2.0
-and the remaining manual desktop checks.
-A new system version becomes available after rebuilding and activating the host;
-adding connections afterward does not require activation.
+See [DEVELOPMENT.md](DEVELOPMENT.md) for the source layout, checks, packaging, and
+manual desktop verification, and [CHANGELOG.md](CHANGELOG.md) for release changes.
 
 License: [MIT](LICENSE).

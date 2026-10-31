@@ -10,7 +10,9 @@
   mapping, 150% desktop scaling, 32-bit color, and `AVC444,frame-ack:off` graphics.
   Existing RDP argument overrides remain available; full-desktop defaults and
   connection and desktop identifiers are preserved.
-- Unified RemoteApp setup, display tuning, and verification documentation.
+- Consolidated user instructions in README and maintenance notes in DEVELOPMENT;
+  removed completed implementation plans and duplicate guides. Installed
+  documentation now preserves links between these documents.
 
 ## 2.2.0 - 2026-10-25
 
