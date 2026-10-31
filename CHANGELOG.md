@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Optional Windows RemoteApp application in the RDP connection wizard and records.
+- RemoteApp uses SDL3 FreeRDP with native Wayland on Wayland sessions, 1:1 pixel
+  mapping, 150% desktop scaling, 32-bit color, and `AVC444,frame-ack:off` graphics.
+  Existing RDP argument overrides remain available; full-desktop defaults and
+  connection and desktop identifiers are preserved.
+- Unified RemoteApp setup, display tuning, and verification documentation.
+
 ## 2.2.0 - 2026-10-25
 
 - English interface, help, desktop launchers, documentation, and source comments.

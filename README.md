@@ -65,12 +65,9 @@ Canceling the wizard does not create an incomplete connection.
 - **RDP:** enter the address, username, port, and optional Windows domain.
   For a single Windows application, fill in **RemoteApp application**, for example
   `||notepad` (a published alias) or `C:\Windows\System32\notepad.exe`.
-  Leave it blank for the full remote desktop. External RDP records use the optional
-  `"remoteapp": "||notepad"` field. Enter only the alias or executable path, without
-  arguments, commas, or quotes; paths with spaces are supported.
-  The Windows server must support RemoteApp and allow the application.
-  RemoteApp uses `xfreerdp` through X11/XWayland, including on GNOME Wayland;
-  an explicit `RDP_CLIENT` override must also support RemoteApp.
+  Leave it blank for the full remote desktop. RemoteApp uses the SDL3 FreeRDP
+  client natively on Wayland, with sharp pixel mapping, 150% desktop scaling,
+  and the graphics settings described in [Windows RemoteApp](#windows-remoteapp).
   Supply the UUID of the password entry in KeePassXC and enable clipboard sharing,
   audio, or multiple monitors as needed. When connecting, enter the database master
   password in a graphical dialog. FreeRDP runs without an extra terminal.
@@ -128,6 +125,68 @@ temporary VPN keys.
 
 SSH does not open the database by default. If your keys are in KeePassXC, you can
 use its SSH agent integration and keep system authentication selected in the wizard.
+
+## Windows RemoteApp
+
+RemoteApp opens an allowed Windows application as a separate window on the Linux
+desktop. The application remains installed and runs on Windows. Enabling ordinary
+Remote Desktop alone does not publish RemoteApp applications.
+
+On Windows Server, publish the application through the Remote Desktop Services
+collection. On supported desktop Windows editions, a publisher such as
+[RemoteApp Tool](https://github.com/kimmknight/remoteapptool) can configure it.
+See its [Windows compatibility list](https://github.com/kimmknight/remoteapptool/wiki/Windows-Compatibility).
+The value `||notepad` requires an application published with the alias `notepad`;
+it is not an automatic alias for every installed Notepad. An executable path must
+also be permitted by the Windows host.
+
+In `outs new` or `outs edit`, set **RemoteApp application** to that alias or path.
+Enter only the program, without arguments, commas, or quotes; paths with spaces
+are supported. Clearing the field restores full-desktop RDP while preserving the
+connection ID and launcher. External RDP records use the same `remoteapp` string.
+
+RemoteApp defaults are:
+
+| Setting | Value | Purpose |
+| --- | --- | --- |
+| Client | `sdl-freerdp` or `sdl-freerdp3` | SDL3 client from FreeRDP 3.32 or newer |
+| `SDL_VIDEODRIVER` | `wayland` when `WAYLAND_DISPLAY` is available | Native Wayland windows |
+| `SDL_VIDEO_WAYLAND_SCALE_TO_DISPLAY` | `1` | Map pixels 1:1 instead of enlarging a low-resolution image |
+| `/scale-desktop` | `150` | Let Windows render larger desktop application controls and text |
+| `/bpp` | `32` | 32-bit session color depth |
+| `/gfx` | `AVC444,frame-ack:off` | AVC444 graphics without waiting for frame acknowledgements |
+
+These defaults apply to RemoteApp, including GUI launchers, manual authentication,
+and KeePassXC authentication. Full-desktop RDP retains its existing defaults.
+The SDL environment is set for the child client only. X11-only sessions do not
+force the Wayland backend. The packaged client supports SDL3 RemoteApp; upstream
+introduced it as a beta feature in [FreeRDP 3.32](https://www.freerdp.com/2026/09/23/3_32_0-release).
+
+An explicit `RDP_CLIENT` override is still honored. That client must support
+RemoteApp and the configured graphics options; the normal path uses SDL3 rather
+than falling back to XWayland.
+
+To change the size for a particular display, add `freerdp_args` to the connection's
+`record` or to a company RDP record. For example, this record fragment selects 125%:
+
+```json
+{
+  "remoteapp": "||notepad",
+  "freerdp_args": ["/scale-desktop:125"]
+}
+```
+
+Record options override built-in defaults. For company-style CLI commands,
+FreeRDP arguments after `--` override record options. Replacing `/gfx` replaces
+the entire option, so include `frame-ack:off` when retaining that behavior.
+Removing `/scale-desktop` alone is not a solution for compositor resampling;
+pixel mapping and Windows DPI control different parts of the display path.
+
+Sharpness, multi-monitor behavior, application DPI support, and responsiveness
+must be checked in a real session. AVC444 is not a guarantee of lossless output.
+Upstream documents [frame-ack:off as a connection-delay diagnostic](https://www.freerdp.com/2024/07/04/3_6_2-release);
+it improved responsiveness in the authorized live investigation behind these
+defaults. See [verification evidence and remaining checks](docs/verification.md).
 
 ## Data locations
 

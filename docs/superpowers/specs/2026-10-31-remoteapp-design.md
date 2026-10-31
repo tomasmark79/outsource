@@ -22,8 +22,11 @@ and validation. Extending the RDP profile is the proposed implementation.
   RemoteApp settings and uses desktop mode. No extra application options are added.
 - Validate the settings before starting a client, including rejecting NUL and
   newline characters. Encode values according to FreeRDP's application syntax.
-- Select a FreeRDP client supporting RemoteApp; on GNOME Wayland an X11 client
-  can run through XWayland. Check the packaged client capabilities.
+- Use the SDL3 FreeRDP client (3.32 or newer). On Wayland, use its native backend
+  with 1:1 pixel mapping, 150% desktop scaling, 32-bit color, and
+  `AVC444,frame-ack:off`. Keep full-desktop defaults unchanged and retain the
+  existing record/CLI option override precedence. An explicit client override
+  remains available. See the README's Windows RemoteApp section for usage.
 - Preserve connection IDs, desktop IDs, existing credential handling, and existing
   RDP behavior. Do not create server configuration or change real profiles.
 - The Windows host must support and permit RemoteApp. Client support alone does
@@ -37,8 +40,10 @@ Run the Python suite, `nix flake check --no-update-lock-file`, and
 `nix build --no-update-lock-file`. Commit verified changes locally.
 
 Document manual checks for a real Windows RemoteApp session, window behavior,
-and GNOME grouping; these cannot be established by unit tests. Do not connect to
-real hosts, unlock databases, activate, push, or release during this work.
+and GNOME grouping; these cannot be established by unit tests. Routine automated
+checks do not connect to real hosts or unlock databases. Authorized live
+investigation is recorded separately in docs/verification.md. Activation, push,
+and release remain separate actions requiring explicit requests.
 
 ## Reference
 

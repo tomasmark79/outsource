@@ -2,7 +2,7 @@
 
 **Goal:** Open a Windows RemoteApp window on Linux from an existing RDP profile.
 **Architecture:** Optional `record.remoteapp` string; empty means desktop RDP.
-Reuse the credential and launcher paths, preferring xfreerdp for RemoteApp.
+Reuse the credential and launcher paths, selecting SDL3 FreeRDP for RemoteApp.
 **Tech Stack:** Python, Zenity, FreeRDP, Nix.
 **Spec:** ../specs/2026-10-31-remoteapp-design.md
 
@@ -18,7 +18,7 @@ profiles and mock clients; no remote sessions or real databases.
 - [x] Add failing tests in `tests/test_rdp.py` and `tests/test_connections.py`
   covering command construction, validation, client selection, and wizard edits.
 - [x] Add `rdp_remoteapp(record)` validation in `bin/outs`, build the application
-  argument, and select xfreerdp for these profiles. Existing raw arguments retain
+  argument, and select SDL3 FreeRDP for these profiles. Existing raw arguments retain
   their normal override precedence.
 - [x] Add the optional field to creation and editing in `bin/connections.py`.
   Empty input removes the setting; saving reuses the same connection ID.
@@ -28,8 +28,11 @@ profiles and mock clients; no remote sessions or real databases.
 
 ## Verification record
 
-All 109 Python tests passed. Native `x86_64-linux` flake checks and the package
-build passed. The new tests failed before implementation and passed afterward.
-No real remote session or database was opened. Live RemoteApp window behavior
-and GNOME grouping remain unverified. No dependency update was needed; the private
-GNOME Console exception serves SSH and is unaffected by this RDP change.
+The initial optional-field implementation passed 109 Python tests, native
+`x86_64-linux` flake checks, and the package build. Subsequent authorized live
+investigation established the SDL3/Wayland defaults described in the spec.
+The native defaults have regression coverage for authentication paths, child
+environment isolation, argument overrides, and unchanged desktop RDP behavior.
+See docs/verification.md for current verification evidence and remaining live
+checks. No dependency update was needed; the private GNOME Console exception
+serves SSH and is unaffected by this RDP change.

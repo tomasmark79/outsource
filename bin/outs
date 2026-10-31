@@ -609,6 +609,13 @@ def run_rdp(
             process_options["stderr"] = subprocess.PIPE
             if GUI_MODE:
                 process_options["stdout"] = subprocess.DEVNULL
+        if any(argument.lower().startswith("/app:") for argument in command[1:]):
+            # Keep RemoteApp pixels sharp without changing the launcher's environment.
+            client_env = os.environ.copy()
+            client_env["SDL_VIDEO_WAYLAND_SCALE_TO_DISPLAY"] = "1"
+            if client_env.get("WAYLAND_DISPLAY"):
+                client_env["SDL_VIDEODRIVER"] = "wayland"
+            process_options["env"] = client_env
         log_event("starting RDP client")
         process = subprocess.Popen(
             [command[0], "/args-from:stdin"] if password is not None else command,
@@ -835,7 +842,7 @@ def select_rdp_client(*, remoteapp: bool = False) -> str:
     if override:
         return require_program(override)
 
-    candidates = ("xfreerdp", "xfreerdp3") if remoteapp else (
+    candidates = ("sdl-freerdp", "sdl-freerdp3") if remoteapp else (
         "sdl-freerdp",
         "sdl-freerdp3",
         "xfreerdp",
@@ -848,7 +855,7 @@ def select_rdp_client(*, remoteapp: bool = False) -> str:
         if executable:
             return executable
     if remoteapp:
-        raise OutsError("RemoteApp requires xfreerdp (X11/XWayland). Install the outsource package through your NixOS configuration.")
+        raise OutsError("RemoteApp requires the SDL3 client from FreeRDP 3.32 or newer. Install the outsource package through your NixOS configuration.")
     raise OutsError("No FreeRDP client is available. Install the outsource package through your NixOS configuration.")
 
 
@@ -1090,7 +1097,12 @@ def handle_rdp(client_id: str, config: dict[str, Any], arguments: list[str]) -> 
         "+dynamic-resolution",
     ]
     if remoteapp:
-        command.append(f"/app:program:{remoteapp}")
+        command.extend([
+            f"/app:program:{remoteapp}",
+            "/scale-desktop:150",
+            "/bpp:32",
+            "/gfx:AVC444,frame-ack:off",
+        ])
     keyboard_layout = record.get("keyboard_layout", "0x00000409")
     if keyboard_layout != "auto":
         if not isinstance(keyboard_layout, str) or not re.fullmatch(

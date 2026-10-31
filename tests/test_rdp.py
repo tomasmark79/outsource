@@ -58,18 +58,41 @@ class RdpTests(unittest.TestCase):
             with self.subTest(program=program), self.assertRaises(outs.OutsError):
                 self.launch({'remoteapp': program})
 
-    def test_remoteapp_prefers_x11_client(self):
+    def test_remoteapp_prefers_sdl_client(self):
         available = {'sdl-freerdp': '/bin/sdl-freerdp', 'xfreerdp': '/bin/xfreerdp'}
         with patch.dict(outs.os.environ, {}, clear=True), \
              patch.object(outs.shutil, 'which', side_effect=available.get):
-            self.assertEqual(outs.select_rdp_client(remoteapp=True), '/bin/xfreerdp')
+            self.assertEqual(outs.select_rdp_client(remoteapp=True), '/bin/sdl-freerdp')
             self.assertEqual(outs.select_rdp_client(), '/bin/sdl-freerdp')
 
-    def test_remoteapp_requires_x11_client_without_override(self):
+    def test_remoteapp_requires_sdl_client_without_override(self):
         with patch.dict(outs.os.environ, {}, clear=True), \
-             patch.object(outs.shutil, 'which', return_value=None), \
+             patch.object(outs.shutil, 'which', side_effect=lambda name: '/bin/xfreerdp' if name == 'xfreerdp' else None), \
              self.assertRaisesRegex(outs.OutsError, 'RemoteApp'):
             outs.select_rdp_client(remoteapp=True)
+
+    def test_remoteapp_uses_verified_graphics_and_scale_defaults(self):
+        for manual in (True, False):
+            with self.subTest(manual=manual):
+                command = self.launch({'remoteapp': '||notepad'}, manual=manual)
+                for option in ['/scale-desktop:150', '/bpp:32', '/gfx:AVC444,frame-ack:off']:
+                    self.assertIn(option, command)
+        desktop = self.launch()
+        self.assertFalse(any(a.startswith(('/scale-desktop:', '/bpp:', '/gfx:')) for a in desktop))
+
+    def test_remoteapp_defaults_can_be_overridden_per_profile_and_command(self):
+        settings = {'remoteapp': '||notepad', 'freerdp_args': [
+            '/scale-desktop:125', '/gfx:RFX']}
+        profile = self.launch(settings)
+        self.assertIn('/scale-desktop:125', profile)
+        self.assertIn('/gfx:RFX', profile)
+        self.assertNotIn('/scale-desktop:150', profile)
+        self.assertNotIn('/gfx:AVC444,frame-ack:off', profile)
+        command = self.launch(settings, ['--', '/scale-desktop:200', '/gfx:AVC444'])
+        self.assertIn('/scale-desktop:200', command)
+        self.assertIn('/gfx:AVC444', command)
+        self.assertNotIn('/scale-desktop:125', command)
+        self.assertNotIn('/gfx:RFX', command)
 
     def test_ipv6_address_is_separated_from_port(self):
         for host in ["::1", "2001:db8::1", "::ffff:192.0.2.1", "fe80::1%eth0"]:
@@ -138,6 +161,49 @@ class RdpProcessTests(unittest.TestCase):
             state = patch.object(outs, name, value)
             state.start()
             self.addCleanup(state.stop)
+
+    def test_remoteapp_wayland_environment_reaches_all_authentication_modes(self):
+        for detached in (True, False):
+            for secure in (True, False):
+                with self.subTest(detached=detached, secure=secure):
+                    process = Mock()
+                    process.poll.return_value = 0
+                    password = bytearray(b'fixture') if secure else None
+                    parent = {'WAYLAND_DISPLAY': 'fixture-wayland', 'SDL_VIDEODRIVER': 'x11',
+                              'SDL_VIDEO_WAYLAND_SCALE_TO_DISPLAY': '0'}
+                    with patch.dict(outs.os.environ, parent, clear=True), \
+                         patch.object(outs.subprocess, 'Popen', return_value=process) as launch, \
+                         patch.object(outs, 'wait_for_client', return_value=0), \
+                         patch.object(outs, 'report_detached_rdp', return_value=0), \
+                         patch.object(outs, 'warn_if_vpn_active', return_value=0):
+                        outs.run_rdp(['sdl-freerdp', '/app:program:||notepad'],
+                                     detached=detached, password=password)
+                        child_env = launch.call_args.kwargs.get('env', {})
+                        self.assertEqual(child_env.get('SDL_VIDEODRIVER'), 'wayland')
+                        self.assertEqual(child_env.get('SDL_VIDEO_WAYLAND_SCALE_TO_DISPLAY'), '1')
+                        self.assertEqual(child_env.get('WAYLAND_DISPLAY'), 'fixture-wayland')
+                        self.assertEqual(dict(outs.os.environ), parent)
+                        if secure:
+                            self.assertEqual(launch.call_args.args[0], ['sdl-freerdp', '/args-from:stdin'])
+                            self.assertEqual(set(password), {0})
+
+    def test_desktop_rdp_does_not_override_sdl_environment(self):
+        process = Mock()
+        process.poll.return_value = 0
+        with patch.dict(outs.os.environ, {'WAYLAND_DISPLAY': 'fixture-wayland'}, clear=True), \
+             patch.object(outs.subprocess, 'Popen', return_value=process) as launch, \
+             patch.object(outs, 'report_detached_rdp', return_value=0):
+            outs.run_rdp(['sdl-freerdp', '/v:example.test'], detached=True)
+        self.assertNotIn('env', launch.call_args.kwargs)
+
+    def test_remoteapp_on_x11_does_not_force_wayland(self):
+        process = Mock()
+        process.poll.return_value = 0
+        with patch.dict(outs.os.environ, {'DISPLAY': ':fixture'}, clear=True), \
+             patch.object(outs.subprocess, 'Popen', return_value=process) as launch, \
+             patch.object(outs, 'report_detached_rdp', return_value=0):
+            outs.run_rdp(['sdl-freerdp', '/app:program:||notepad'], detached=True)
+        self.assertNotIn('SDL_VIDEODRIVER', launch.call_args.kwargs.get('env', {}))
 
     def test_manual_debug_and_keepass_share_exit_classification(self):
         # A harmless process accepts the same line-based input as FreeRDP.

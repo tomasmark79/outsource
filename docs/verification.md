@@ -1,5 +1,37 @@
 # Release verification
 
+## Unreleased: native Windows RemoteApp
+
+An authorized live investigation on GNOME/Wayland tested separate Windows
+application windows using the packaged FreeRDP 3.32.0 base. A temporary client
+with timing-only instrumentation was also used; that instrumentation is not
+included in Outsource.
+
+- X11/XWayland RemoteApp showed movement, flickering, and multi-monitor issues.
+  The native SDL3 Wayland client improved the behavior reported by the user.
+- 1:1 SDL pixel mapping produced sharp output. Windows desktop scaling of 150%
+  then restored the requested readable application size.
+- Full-desktop SDL RDP was reported fast while RemoteApp showed intermittent
+  delayed responses. Local input timing stayed below about 4 ms of event queue
+  age and 0.4 ms of handler processing during a reported delay. Those measurements
+  do not measure the entire path until a Windows application visibly responds.
+- Disabling graphics frame acknowledgements with AVC444 was reported
+  significantly better in Notepad and excellent in Total Commander.
+
+The responsiveness comparison occurred while Windows updates were in progress.
+Repeat it after the Windows reboot to check reproducibility. These live findings
+motivated the production defaults; they are not a fresh live verification of the
+final Outsource launcher. GNOME dock grouping for SDL RemoteApp also remains a
+manual check. Connection and desktop identifiers are preserved by the change.
+
+All 114 Python tests, `nix flake check --no-update-lock-file`, and
+`nix build --no-update-lock-file` passed on `x86_64-linux` for this change.
+Automated regression checks use temporary data and mocked clients. They cover the
+native defaults, per-profile and CLI overrides, child-only environment changes,
+manual and KeePassXC authentication, and unchanged full-desktop RDP behavior.
+No live profile, host identifier, credential, or diagnostic activity log is included in
+the package. No dependency update or SSH terminal exception change is involved.
+
 ## 2.2.0
 
 Verified on 2026-10-25 on `x86_64-linux` with NixOS, GNOME, and Wayland.
