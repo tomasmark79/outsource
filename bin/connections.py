@@ -310,13 +310,23 @@ def edit_connection(api, previous=None):
         else:
             record.pop("remoteapp", None)
         record["keepass"] = enter_credential(api, record.get("keepass"))
+        audio_modes = [("local", "Play audio on this computer"),
+                       ("remote", "Play audio on the remote computer"),
+                       ("off", "Do not play audio")]
+        audio = dialog(api, "--list", "--radiolist", "--width=650", "--height=300",
+                       "--text=RDP audio playback", "--column=Select", "--column=ID",
+                       "--column=Audio mode", "--hide-column=2", "--print-column=2", "--",
+                       *[value for mode, label in audio_modes
+                         for value in (str(record.get("audio", "local") == mode).upper(), mode, label)])
+        if audio not in {mode for mode, _ in audio_modes}:
+            raise api.Cancelled()
+        record["audio"] = audio
         options = dialog(api, "--list", "--checklist", "--text=RDP options", "--column=Enable", "--column=ID", "--column=Option",
                          "--hide-column=2", "--print-column=2", "--separator=,", "--",
                          str(record.get("clipboard", True)).upper(), "clipboard", "Share clipboard",
-                         str(record.get("audio", "local") == "local").upper(), "audio", "Play audio on this computer",
                          str(record.get("multimon", False)).upper(), "multimon", "Use multiple monitors")
         flags = options.split(",")
-        record.update(clipboard="clipboard" in flags, audio="local" if "audio" in flags else "off", multimon="multimon" in flags)
+        record.update(clipboard="clipboard" in flags, multimon="multimon" in flags)
     elif kind == "ssh":
         mode = choose(api, "SSH authentication", [("config", "Use ~/.ssh/config and the SSH agent"), ("keepass", "Key from a KeePassXC attachment")])
         if mode == "config":

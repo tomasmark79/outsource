@@ -258,7 +258,7 @@ class ConnectionTests(unittest.TestCase):
         with patch.object(connections, 'choose', return_value='rdp'), \
              patch.object(connections, 'details_form', return_value={'name': 'Windows', 'host': 'server', 'username': 'user', 'port': '', 'domain': '', 'remoteapp': ''}), \
              patch.object(connections, 'enter_credential', return_value={'uuid': 'b' * 32}), \
-             patch.object(connections, 'dialog', side_effect=['clipboard,audio', '', '']):
+             patch.object(connections, 'dialog', side_effect=['local', 'clipboard', '', '']):
             connections.edit_connection(self.api)
         record = json.loads(next(connections.data_dir(self.api).glob('*.json')).read_text())['record']
         self.assertEqual(record['keepass'], {'uuid': 'b' * 32})
@@ -266,13 +266,64 @@ class ConnectionTests(unittest.TestCase):
         self.assertTrue(record['clipboard'])
         self.assertEqual(record['audio'], 'local')
 
+    def test_rdp_wizard_offers_all_three_audio_modes(self):
+        for mode in ['local', 'remote', 'off']:
+            with self.subTest(mode=mode):
+                previous_files = set(connections.data_dir(self.api).glob('*.json'))
+                form = {'name': 'Windows', 'host': 'server', 'username': 'user',
+                        'port': '', 'domain': '', 'remoteapp': ''}
+                with patch.object(connections, 'choose', return_value='rdp'), \
+                     patch.object(connections, 'details_form', return_value=form), \
+                     patch.object(connections, 'enter_credential', return_value={'uuid': 'b' * 32}), \
+                     patch.object(connections, 'dialog', side_effect=[mode, 'clipboard', '', '']) as dialog:
+                    connections.edit_connection(self.api)
+                path, = set(connections.data_dir(self.api).glob('*.json')) - previous_files
+                record = json.loads(path.read_text())['record']
+                self.assertEqual(record['audio'], mode)
+                self.assertTrue(record['clipboard'])
+                audio_dialogs = [call.args for call in dialog.call_args_list if '--radiolist' in call.args]
+                self.assertEqual(len(audio_dialogs), 1)
+                for value in ['local', 'remote', 'off']:
+                    self.assertIn(value, audio_dialogs[0])
+                self.assertIn('TRUE', audio_dialogs[0])
+
+    def test_rdp_audio_edit_prefills_and_preserves_remote_mode(self):
+        self.connection.update(type='rdp', record={
+            'host': 'server', 'username': 'user', 'audio': 'remote',
+            'keepass': {'uuid': 'b' * 32}})
+        connections.save(self.api, self.connection)
+        previous = copy.deepcopy(self.connection)
+        with patch.object(connections, 'entry', side_effect=lambda api, label, default='', required=True: str(default)), \
+             patch.object(connections, 'enter_credential', return_value={'uuid': 'b' * 32}), \
+             patch.object(connections, 'dialog', side_effect=['remote', 'clipboard', '', '']) as dialog:
+            connections.edit_connection(self.api, previous)
+        updated = connections.load(self.api, previous['id'])
+        self.assertEqual(updated['record']['audio'], 'remote')
+        self.assertEqual(updated['id'], previous['id'])
+        args = next(call.args for call in dialog.call_args_list if '--radiolist' in call.args)
+        start = args.index('--') + 1
+        rows = [args[i:i + 3] for i in range(start, len(args), 3)]
+        self.assertEqual([(row[0], row[1]) for row in rows],
+                         [('FALSE', 'local'), ('TRUE', 'remote'), ('FALSE', 'off')])
+
+    def test_cancelling_audio_selection_creates_no_launcher(self):
+        form = {'name': 'Windows', 'host': 'server', 'username': 'user',
+                'port': '', 'domain': '', 'remoteapp': ''}
+        with patch.object(connections, 'choose', return_value='rdp'), \
+             patch.object(connections, 'details_form', return_value=form), \
+             patch.object(connections, 'enter_credential', return_value={'uuid': 'b' * 32}), \
+             patch.object(connections, 'dialog', side_effect=outs.Cancelled):
+            with self.assertRaises(outs.Cancelled):
+                connections.edit_connection(self.api)
+        self.assertFalse(connections.data_dir(self.api).exists())
+
     def test_remoteapp_wizard_and_clearing_preserve_launcher_id(self):
         form = {'name': 'Notepad', 'host': 'server', 'username': 'user',
                 'port': '', 'domain': '', 'remoteapp': '||notepad'}
         with patch.object(connections, 'choose', return_value='rdp'), \
              patch.object(connections, 'details_form', return_value=form), \
              patch.object(connections, 'enter_credential', return_value={'uuid': 'b' * 32}), \
-             patch.object(connections, 'dialog', side_effect=['clipboard', '', '']):
+             patch.object(connections, 'dialog', side_effect=['local', 'clipboard', '', '']):
             connections.edit_connection(self.api)
         path = next(connections.data_dir(self.api).glob('*.json'))
         previous = json.loads(path.read_text())
@@ -281,7 +332,7 @@ class ConnectionTests(unittest.TestCase):
         with patch.object(connections, 'entry', side_effect=lambda api, label, default='', required=True:
                           '' if 'RemoteApp' in label else str(default)), \
              patch.object(connections, 'enter_credential', return_value={'uuid': 'b' * 32}), \
-             patch.object(connections, 'dialog', side_effect=['clipboard', '', '']):
+             patch.object(connections, 'dialog', side_effect=['local', 'clipboard', '', '']):
             connections.edit_connection(self.api, previous)
         updated = json.loads(path.read_text())
         self.assertNotIn('remoteapp', updated['record'])

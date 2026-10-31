@@ -68,8 +68,12 @@ Canceling the wizard does not create an incomplete connection.
   Leave it blank for the full remote desktop. RemoteApp uses the SDL3 FreeRDP
   client natively on Wayland, with sharp pixel mapping, 150% desktop scaling,
   and the graphics settings described in [Windows RemoteApp](#windows-remoteapp).
-  Supply the UUID of the password entry in KeePassXC and enable clipboard sharing,
-  audio, or multiple monitors as needed. When connecting, enter the database master
+  Supply the UUID of the password entry in KeePassXC. In **RDP audio playback**,
+  choose **Play audio on this computer** (`local`, the default), **Play audio on
+  the remote computer** (`remote`), or **Do not play audio** (`off`). This choice
+  is also available when editing a launcher and applies to full-desktop RDP and
+  RemoteApp. Clipboard sharing and multiple monitors are separate options.
+  When connecting, enter the database master
   password in a graphical dialog. FreeRDP runs without an extra terminal.
   Closing the window or logging out does not open another dialog; a connection
   error displays a message with the log path.

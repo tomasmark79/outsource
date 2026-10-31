@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- RDP launcher creation and editing offer all three audio modes: playback on the
+  local computer, playback on the remote computer, and no playback. Editing
+  preserves the selected mode instead of converting remote playback to off.
 - Optional Windows RemoteApp application in the RDP connection wizard and records.
 - RemoteApp uses SDL3 FreeRDP with native Wayland on Wayland sessions, 1:1 pixel
   mapping, 150% desktop scaling, 32-bit color, and `AVC444,frame-ack:off` graphics.
