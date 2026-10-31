@@ -327,6 +327,6 @@ not a confirmed general cause or a recommendation to remove security updates.
 ## Development
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for the source layout, checks, packaging, and
-manual desktop verification, and [CHANGELOG.md](CHANGELOG.md) for release changes.
+manual desktop verification.
 
 License: [MIT](LICENSE).

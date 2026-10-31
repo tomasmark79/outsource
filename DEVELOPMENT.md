@@ -1,8 +1,8 @@
 # Development
 
-User setup and troubleshooting belong in [README.md](README.md). Released changes
-belong in [CHANGELOG.md](CHANGELOG.md). Keep durable maintenance information here;
-completed implementation plans remain available in Git history.
+User setup and troubleshooting belong in [README.md](README.md). Keep durable
+maintenance information here; change history and completed implementation plans
+remain available in Git history.
 
 ## Source layout
 

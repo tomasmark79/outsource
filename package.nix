@@ -46,7 +46,6 @@ stdenvNoCC.mkDerivation {
       ./LICENSE
       ./README.md
       ./DEVELOPMENT.md
-      ./CHANGELOG.md
       (lib.fileset.fileFilter (file: file.hasExt "py") ./tests)
     ];
   };
@@ -74,7 +73,7 @@ stdenvNoCC.mkDerivation {
     cp assets/*.svg "$out/share/icons/hicolor/scalable/apps/"
     cp assets/*.desktop "$out/share/applications/"
     mkdir -p "$out/share/doc/outsource"
-    cp LICENSE README.md DEVELOPMENT.md CHANGELOG.md "$out/share/doc/outsource/"
+    cp LICENSE README.md DEVELOPMENT.md "$out/share/doc/outsource/"
     makeWrapper ${sshTerminal}/bin/kgx "$out/bin/outs-terminal" \
       --run 'if [[ "$1" == --gapplication-app-id=* ]]; then export OUTSOURCE_TERMINAL_ID="''${1#*=}"; fi'
     makeWrapper ${python3}/bin/python3 "$out/bin/outs" \
